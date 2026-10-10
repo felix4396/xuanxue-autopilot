@@ -14,3 +14,4 @@ browser-profile/
 __pycache__/
 *.pyc
 .venv/
+vendor/

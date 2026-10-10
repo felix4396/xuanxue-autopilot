@@ -39,7 +39,7 @@ def cmd_bench(args):
         db.upsert_account(args.platform, args.uid, nickname=args.nickname or "", followers=args.followers or 0)
         print(f"已添加对标账号: {args.platform}/{args.uid}")
     elif args.action == "list":
-        for a in db.list_accounts(args.platform):
+        for a in db.list_accounts(args.platform if args.platform else None):
             print(f"{a['platform']:8} {a['uid']:20} {a['nickname']:12} 粉丝={a['followers']}")
 
 

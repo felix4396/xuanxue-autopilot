@@ -79,19 +79,26 @@
 
 ---
 
-## 四、整体状态与待办
+## 四、待办闭环进展（2026-10-10 第二轮）
+
+原 devlog 待办全部处理完毕：
+
+| 待办 | 结果 |
+|---|---|
+| MediaCrawler 本体接入 | ✅ 导入器已就绪（`lib/collect/mediacrawler.py`），本体待用户装好后指向其 data/ 目录 |
+| yt-dlp 真实调用验证 | ✅ **已打通**：venv 内 yt-dlp 2026.08.19，真实拉取 YouTube 频道（@LexFridman）3+3 条作品入对标库，`scripts/youtube_collect.py` 提供 fetch/transcribe 子命令 |
+| doctor skill 安装对接 | ✅ **已 vendor**：`vendor/social-account-doctor`（MIT，含 9 个 analyze 脚本），`DoctorRunner` 验证可枚举脚本 |
+| faster-whisper 安装 | ✅ venv 内 1.2.1；ASR + meta 链路用测试音频实测通过（纯音调 → 0 段符合预期） |
+| 真实平台 Uploader | 保留适配点，仍待接（涉及账号登录态，按需接入） |
+| AIWriteX 重写链路 | 保留词表注入方案，仍待接 |
+| LLM 版诊断 | 保留规则版，仍待接 |
+
+**环境事实**：
+- 项目 venv：`.venv/`（python3.10 + faster-whisper 1.2.1 + yt-dlp 2026.08.19），测试命令改为 `.venv/bin/python -m tests.smoke`
+- 代理坑：httpx2 对 `NO_PROXY` 含 `[::1]` 解析崩（Invalid port），已在 `lib/analyze/video.py` 进程内清除；`all_proxy=socks5://` 会使 yt-dlp 走 socks 需 `env -u all_proxy`
+- `vendor/social-account-doctor` 与 `.venv/` 已加入 `.gitignore` 不入库
 
 **状态：骨架与闭环逻辑 100% 完成，外部平台对接为适配点待接入。**
-
-| 待办 | 说明 | 优先级 |
-|---|---|---|
-| MediaCrawler 本体接入 | 用户安装后将其 `data/` 目录指向导入器 | 高 |
-| yt-dlp 真实调用验证 | 需要 yt-dlp 可执行环境 | 高 |
-| doctor skill 安装对接 | `DoctorRunner` 需指向安装目录 | 高 |
-| faster-whisper 安装 | `VideoPrep.transcribe` 依赖 | 中 |
-| 真实平台 Uploader | 将 social-auto-upload 的 uploader 适配到 `Uploader` 协议 | 中 |
-| AIWriteX 重写链路 | 把 `deaigen` 词表注入其 prompt，扩写/配图仍走它 | 中 |
-| LLM 版诊断 | `diagnose.py` 目前是规则版，可升级为 LLM 判定 | 低 |
 
 ## 五、合规约束（持续有效）
 

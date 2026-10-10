@@ -11,8 +11,14 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
+
+# httpx2 对 NO_PROXY 中的 [::1] 解析有 bug（Invalid port），
+# faster-whisper→huggingface_hub 走 httpx2，这里进程内安全清除。
+for _k in ("NO_PROXY", "no_proxy"):
+    os.environ.pop(_k, None)
 
 
 class VideoPrep:
