@@ -139,9 +139,58 @@
 - 抓取控频 ≥ 30s/条；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
 
-## 合规约束（持续有效）
+## 七、数据采集接口接入（2026-10-10 第四轮）
+
+调研并接入开源采集方案，替代纯接口硬闯路线。
+
+### 选型结论
+
+| 平台 | 选型 | 状态 |
+|---|---|---|
+| 抖音 | **Evil0ctal/Douyin_TikTok_Download_API v4**（⭐20.6k，自托管 REST，a_bogus 纯 Python 签名） | 服务已部署本机 :8080 并实测（见下） |
+| 小红书 | **aki66938/xhs-toolkit**（⭐1.4k，MIT，创作者中心 MCP：Cookie 管理/发布/数据看板） | 已安装 + cookie 格式打通；发布与数据中心能力待用户登录创作者中心（短信验证码）后解锁 |
+| YouTube | yt-dlp（已打通） | 不变 |
+| 备选 | TikHub 付费 API（doctor 作者推荐，一 key 通吃全平台，零风控） | 未购买，作为兜底路线 |
+
+### 实测记录
+
+**抖音 dtk 服务**：
+- v4 单机部署 `/tmp/dtk_v4`（pip 装依赖 + `python start.py`），端口 8080，OpenAPI 文档 `/docs` 可用
+- 浏览器登录态 cookie（58 条）+ 真实 Chrome UA 已注入 `crawlers/douyin/web/config.yaml`
+- 实测 `fetch_user_post_videos` 返回 403：抖音对服务端签名（a_bogus 与指纹绑定）校验比浏览器严格，开源方案常见问题，README 的 v5"身份池"即为此设计
+- **结论**：接口路径打通，但需要身份池轮换或 TikHub 才能稳定跑。适配器代码已写好：`lib/collect/douyin_api.py`
+
+**小红书 xhs-toolkit**：
+- venv 安装成功，`CookieManager.validate_cookies()` 用我们导出的 11 条 cookie 验证通过
+- playwright 导出的 cookie → toolkit JSON 格式转换脚本已验证
+- 局限如实记录：toolkit 覆盖**创作者中心**（自己账号的发布/数据看板），不覆盖对标账号采集
+- 对标采集新增 DOM 适配器：`lib/collect/xhs_dom.py`（持久登录态浏览器解析，控频 45s）
+
+**小红书 IP 风控**：本次实测中搜索页/explore/首页相继触发「安全限制 300012」（IP 维度），系短时间高频自动化操作所致。风控冷却期约数小时；期间所有小红书采集暂停。**教训：自动化节奏必须走 RateLimiter，人改一次要等很久。**
+
+### 新增适配器
+
+- `lib/collect/douyin_api.py` — DouyinApiAdapter：对接 dtk 服务（fetch_works/fetch_detail/download_media）
+- `lib/collect/xhs_dom.py` — XhsDomAdapter：浏览器 DOM 采集（fetch_works 搜索流/download_media 封面），视频下载留待 MediaCrawler 下载器接入
+
+两个适配器均通过 `BaseAdapter` 抽象，`get_adapter()` 工厂可直接注册；导入验证通过，全量回归（6+5 tests）通过。
+
+### 当前采集链路状态
+
+```
+YouTube:  yt-dlp ────────────────── 已打通（实测）
+抖音:     dtk 服务 ── 需身份池/TikHub ─ 接口通，数据待通
+小红书:   浏览器 DOM ── 需 IP 风控冷却 ─ 代码就绪，等冷却
+```
 
 - 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
 - `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`，凭证不入 Git。
 - 抓取控频 ≥ 30s/条；发布必须过 `pending_review` 人审网关（代码级强制）。
+- 内容二创需实质性改编，不直接搬运。
+
+## 合规约束（持续有效）
+
+- 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
+- `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`，凭证不入 Git。
+- 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
