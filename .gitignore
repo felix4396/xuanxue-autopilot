@@ -1,0 +1,16 @@
+# 数据与凭证 — 均不入 Git
+data/
+output/
+*.db
+*.sqlite3
+
+# 登录态 / 密钥
+.env
+*.cookie
+*cookies*.json
+browser-profile/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
