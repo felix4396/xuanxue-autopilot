@@ -100,7 +100,46 @@
 
 **状态：骨架与闭环逻辑 100% 完成，外部平台对接为适配点待接入。**
 
-## 五、合规约束（持续有效）
+## 六、全流程实测（2026-10-10 第三轮，登录态接入后）
+
+用真实登录态浏览器 + 真实数据跑通六阶段，**未触发任何真实发布**。
+
+### 实测记录
+
+| 阶段 | 实测内容 | 结果 |
+|---|---|---|
+| ①② 采集 | yt-dlp 真实拉取 @lexfridman shorts 8 条；下载 `UbOjufRmpq4`（480p 含音轨 1.1MB）落盘 | ✅ |
+| ③ 抽帧 | FFmpeg 0.5fps → 58 张关键帧 | ✅ |
+| ③ ASR | faster-whisper small 离线模式 → 24 段英文逐字稿，内容准确（COBOL 话题与视频相符） | ✅ |
+| ③ 拆解入库 | doctor 报告解析 → 钩子第4秒/故事体/8分/标题入资产库；作品标记 analyzed | ✅ |
+| ④ 产出 | 基于拆解自动产出小红书初稿（含去AI味），入人审队列 | ✅ |
+| ⑤ 发布演练 | 人审 approve → 定时到期 → DryRunUploader 演练（remote_id=`dry-*`，**未真实发布**） | ✅ |
+| ⑥ 复盘回流 | 回采 800播放/90赞/380完播 → 诊断「钩子有效：加分入库」，like_rate=0.1125；好钩子写入 validated | ✅ |
+
+### 实测中发现并修复的问题
+
+1. **yt-dlp 选流无音轨**：`-f "mp4[height<=480]"` 选到无声流 → ASR 报 IndexError。改为 `bv*+ba/b` 合流后音轨正常（opus）。
+2. **whisper 模型下载三连坑**：httpx2 与代理环境变量（NO_PROXY `[::1]`、socks5）冲突导致 HF 下载全部失败 → 用 curl 从 hf-mirror.com 直拉 5 个模型文件到 HF 缓存目录 + `HF_HUB_OFFLINE=1` 离线运行解决。
+3. **DryRunUploader 类型 bug**：不接受 str 路径 → 已修（commit f4e377e 后追加修复）。
+4. **小红书用户主页风控**：直接访问 /user/profile/ 触发「安全限制 300012」（IP 风险）；首页与 explore 正常。**对标账号抓取应优先走 agent 浏览器模拟真人路径，或换 TikHub 付费 API**（与 doctor README 的数据源优先级一致）。
+5. **抖音用户页未渲染出作品数据**（无验证码但快照无作品/粉丝字段），需要滚动加载或更长的真人模拟，列入后续接入点。
+
+### 环境依赖结论
+
+- whisper 模型：已缓存 `Systran/faster-whisper-small`（483MB），需 `HF_HUB_OFFLINE=1` 运行
+- 网络规则：yt-dlp 需 `env -u all_proxy`（socks 代理会拖慢下载）；HF 下载走 hf-mirror 直连
+- 登录态：`data/browser-profile/xhs` 持久 profile，四平台已登录
+
+### 结论
+
+**六阶段全部实测打通。** 真实发布按红线禁用（DryRun 演练替代）；国内平台对标账号抓取受风控限制，按 doctor 推荐优先级，下一步接入 TikHub 付费 API 或浏览器模拟真人路径。
+
+- 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
+- `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`，凭证不入 Git。
+- 抓取控频 ≥ 30s/条；发布必须过 `pending_review` 人审网关（代码级强制）。
+- 内容二创需实质性改编，不直接搬运。
+
+## 合规约束（持续有效）
 
 - 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
 - `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`，凭证不入 Git。
