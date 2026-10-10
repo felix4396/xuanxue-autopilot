@@ -38,6 +38,9 @@ def import_mediacrawler_dir(
     src = Path(src)
     stats = {"files": 0, "accounts": 0, "works": 0}
     for f in sorted(src.rglob("*.jsonl")):
+        # 只导入内容文件（search_contents/creator_contents），跳过评论文件
+        if "comment" in f.name.lower():
+            continue
         stats["files"] += 1
         for line in f.read_text(encoding="utf-8").splitlines()[:limit_per_file]:
             line = line.strip()
@@ -48,6 +51,13 @@ def import_mediacrawler_dir(
             except json.JSONDecodeError:
                 continue
             platform = PLATFORM_MAP.get(str(rec.get("platform", "")).lower())
+            if not platform:
+                # MediaCrawler jsonl 不写 platform 字段，从路径推断（data/bili/jsonl/...）
+                parts = {p.lower() for p in f.parts}
+                for key, val in PLATFORM_MAP.items():
+                    if key in parts:
+                        platform = val
+                        break
             if not platform:
                 continue
             uid = str(rec.get("user_id") or rec.get("nickname") or "unknown")

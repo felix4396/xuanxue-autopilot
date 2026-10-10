@@ -235,10 +235,51 @@ YouTube:  yt-dlp ────────────────── 已打�
 - 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
 
-## 合规约束（持续有效）
+## 九、MediaCrawler 真实爬取打通（2026-10-11 第六轮）
+
+用户决策：TikHub 降级为备选（免费额度不可用），MediaCrawler 为首选。跑通 B 站全链路。
+
+### 实测结果
+
+| 平台 | 结果 |
+|---|---|
+| **B站** | ✅ **完整跑通**：cookie 登录 → 搜索「玄学」→ 19 条作品 + 19 个账号入对标库（头部：120分钟玄学秘术合集 13.2万赞、倪海厦易经 7.8万赞）→ 取 2.7万赞爆款「算命真的准吗」→ yt-dlp 下载 69MB → 抽帧 358 张 + ASR 143 段 → LLM 拆解（观点体/钩子分）→ 入资产库 → 出初稿 → LLM 扩写成稿（标题/开头/正文/CTA 全齐）|
+| 抖音 | ⚠️ MediaCrawler cookie 登录失败——之前测试消耗的登录态已被风控失效。需重新人工登录一次即可 |
+| 小红书 | 待 IP 风控冷却（MediaCrawler 同样支持 xhs 平台，登录态可复用） |
+
+### 过程中修复
+
+1. **httpx2 NO_PROXY [::1] bug 再现**：MediaCrawler 环境同样中招。标准跑法：`env -u all_proxy -u ALL_PROXY -u http_proxy -u https_proxy -u NO_PROXY -u no_proxy NO_PROXY="" .venv/bin/python main.py ...`
+2. **导入器字段映射**：MediaCrawler jsonl 不写 platform 字段 → 改为从文件路径推断（`data/bili/jsonl/`）；评论文件（`search_comments_*`）跳过不导，避免污染对标库
+
+### MediaCrawler 使用手册（项目内）
+
+```bash
+cd vendor/MediaCrawler
+# B站搜索采集（cookie 已配置在 config/base_config.py 的 COOKIES）
+env -u all_proxy -u ALL_PROXY -u http_proxy -u https_proxy -u NO_PROXY -u no_proxy NO_PROXY="" \
+  .venv/bin/python main.py --platform bili --type search --keywords "玄学" --start 1
+# 产出 → 入对标库
+cd ../.. && .venv/bin/python -c "
+import sys; sys.path.insert(0,'.')
+from lib.collect.mediacrawler import import_mediacrawler_dir
+from lib.bench.store import BenchStore
+print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench.db')))"
+```
+
+### 闭环状态
+
+**B站线已实现全闭环**：采集(MC) → 入库 → 下载(yt-dlp) → 原料包(抽帧+ASR) → LLM拆解 → 资产库 → 初稿 → LLM扩写 → 人审队列。剩余：抖音需重新登录 cookie，小红书等风控冷却。
 
 - 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
 - `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`、key，凭证不入 Git。
 - 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
 - TikHub 免费额度稀缺：禁止批量/循环调用数据端点，单次调用前须人工确认。
+
+## 合规约束（持续有效）
+
+- 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
+- `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`、key，凭证不入 Git。
+- 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
+- 内容二创需实质性改编，不直接搬运。
