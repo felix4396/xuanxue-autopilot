@@ -39,7 +39,7 @@ class DoctorRunner:
         return out.stdout
 
 
-STRUCT_MAP = {"清单体": "list", "故事体": "story", "教程体": "tutorial"}
+STRUCT_MAP = {"清单体": "list", "故事体": "story", "教程体": "tutorial", "观点体": "opinion"}
 
 
 def import_doctor_report(report_path: str | Path, platform: str, wid: str, assets: AssetStore) -> dict:

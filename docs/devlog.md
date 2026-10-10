@@ -188,9 +188,57 @@ YouTube:  yt-dlp ────────────────── 已打�
 - 抓取控频 ≥ 30s/条；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
 
-## 合规约束（持续有效）
+## 八、密钥接入与 LLM 环节打通（2026-10-10 第五轮）
+
+用户提供 LLM 端点与 TikHub key，六个缺口按优先级处理。
+
+### 用户决策记录
+
+- **发布能力不接**（缺口#4 #5 关闭）：人审网关保留为 DryRun 演练，真实发布器不做
+- LLM key + TikHub key 提供（TikHub 免费额度，要求节约使用）
+- MediaCrawler 授权安装
+
+### 完成项
+
+| 缺口 | 结果 |
+|---|---|
+| #2 LLM 深度拆解 | ✅ `lib/llm.py`（OpenAI 兼容客户端，.env 读 key）+ `lib/analyze/llm_analyze.py`。实测：COBOL 视频逐字稿 → 结构化拆解（钩子/观点体/8分/仿写标题/可迁移观点/爆款原因），端到端入资产库（STRUCT_MAP 补「观点体」→opinion） |
+| #3 LLM 扩写 | ✅ `lib/compose/llm_expand.py`。实测：模板初稿 → 成稿（3 标题+口语化正文+CTA），去 AI 味词表写进 system prompt。产出质量显著高于模板拼接 |
+| #6 MediaCrawler 本体 | ✅ vendor 进项目，uv sync（Python 3.11.12 独立 venv），CLI 验证可运行；导入器对接其 `data/` 目录空跑通过 |
+
+### TikHub 实测结论（重要）
+
+- key 有效，70 组端点可用，账户名「自媒体」
+- **免费额度实际不可用于数据端点**：`allow_free_credit=1` 的标记与实际不符，实测 `douyin/search`、`douyin/app/v3/fetch_user_post_videos`、`xiaohongshu/app_v2/search_notes` 全部返回 **402 Insufficient balance**（"does not accept free credit"）
+- 实际消耗：仅用户搜索端点成功计费过一次（0.001 美元级别），拿到了 25 个玄学对标账号（含「云溪爱玄学」17.5万粉/2049 作品、「玄学机长」13.6万粉/733 作品等，sec_user_id 已留存于会话记录）
+- **结论：采集要跑通需充值**（或走已就绪的浏览器 DOM 路线等 IP 冷却）。适配器代码均已就绪
+
+### 环境新增
+
+- `.env`（gitignore 排除）：LLM_API_KEY / LLM_BASE_URL / LLM_MODEL / TIKHUB_API_KEY
+- `lib/llm.py` 依赖 python-dotenv
+- `vendor/MediaCrawler/`（uv 独立环境 `.venv`，Python 3.11.12）
+
+### 缺口状态更新
+
+| # | 缺口 | 状态 |
+|---|---|---|
+| 1 | 对标采集数据 | ⏳ TikHub 需充值；或小红书 IP 冷却后走 DOM 路线 |
+| 2 | LLM 拆解 | ✅ 完成 |
+| 3 | LLM 扩写 | ✅ 完成 |
+| 4 | 发布能力 | 用户明确不接，关闭 |
+| 5 | 真实发布器 | 用户明确不接，关闭 |
+| 6 | MediaCrawler | ✅ 完成（等首次真实爬取产生 data/ 即入对标库） |
 
 - 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
 - `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`，凭证不入 Git。
 - 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
+
+## 合规约束（持续有效）
+
+- 仅限个人非商用；MediaCrawler 与 social-auto-upload/Sunbird 系许可证限商用。
+- `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`、key，凭证不入 Git。
+- 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
+- 内容二创需实质性改编，不直接搬运。
+- TikHub 免费额度稀缺：禁止批量/循环调用数据端点，单次调用前须人工确认。
