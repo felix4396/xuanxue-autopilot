@@ -27,8 +27,8 @@ class DryRunUploader(Uploader):
     """测试/演练用：不真发，返回伪 remote_id。"""
     platform = "dryrun"
 
-    def __init__(self, log: Path):
-        self.log = log
+    def __init__(self, log: str | Path):
+        self.log = Path(log)
         self.log.parent.mkdir(parents=True, exist_ok=True)
 
     def upload(self, item: dict) -> str:
