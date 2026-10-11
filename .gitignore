@@ -16,3 +16,4 @@ __pycache__/
 .venv/
 vendor/
 .playwright-cli/
+browser-cookies/

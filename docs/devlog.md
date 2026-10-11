@@ -244,8 +244,9 @@ YouTube:  yt-dlp ────────────────── 已打�
 | 平台 | 结果 |
 |---|---|
 | **B站** | ✅ **完整跑通**：cookie 登录 → 搜索「玄学」→ 19 条作品 + 19 个账号入对标库（头部：120分钟玄学秘术合集 13.2万赞、倪海厦易经 7.8万赞）→ 取 2.7万赞爆款「算命真的准吗」→ yt-dlp 下载 69MB → 抽帧 358 张 + ASR 143 段 → LLM 拆解（观点体/钩子分）→ 入资产库 → 出初稿 → LLM 扩写成稿（标题/开头/正文/CTA 全齐）|
-| 抖音 | ⚠️ MediaCrawler cookie 登录失败——之前测试消耗的登录态已被风控失效。需重新人工登录一次即可 |
-| 小红书 | 待 IP 风控冷却（MediaCrawler 同样支持 xhs 平台，登录态可复用） |
+| 抖音 | ⚠️ **IP 级软风控确认**：搜索接口返回空（不弹验证码）；用户主页能开但作品列表接口返回"服务异常"占位（点刷新无效）；视频详情页正常。已写 `lib/collect/douyin_dom.py`（CDP adapter，限定 user-post-list 容器防推荐流污染，内置风控检测）。cookie 重新扫码已保存（58条含 httpOnly sessionid）。等 IP 冷却或换网络即用 |
+| 抖音旧结论 | ~~cookie 登录失败~~ 实为 MediaCrawler 登录检查机制不适配新版抖音（localStorage 判定超时），且 COOKIES 共享变量被 B站覆盖过——已建 `scripts/mc_cookie.sh` 按平台切换 |
+| 小红书 | 待 IP 风控冷却（MediaCrawler 支持 xhs 平台；DouyinDomAdapter 的 CDP 模式可复用到 xhs） |
 
 ### 过程中修复
 
