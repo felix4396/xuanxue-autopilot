@@ -79,8 +79,8 @@ class XhsSearchAdapter(BaseAdapter):
         kw = urllib.parse.quote(keyword)
         ws, tab = self._open(f"https://www.xiaohongshu.com/search_result?keyword={kw}")
         try:
-            time.sleep(3)
-            r = self._ev(ws, f"""(() => {{
+            # 页面卡片懒渲染：0 张时等待重取（冷启动首跑渲染可能慢于 9s）
+            expr = f"""(() => {{
               const cards = [...document.querySelectorAll('section.note-item')].slice(0, {count});
               return cards.map(s => {{
                 const a = s.querySelector('a[href*="/explore/"], a[href*="/search_result/"]');
@@ -93,7 +93,14 @@ class XhsSearchAdapter(BaseAdapter):
                   author: ((s.querySelector('.author .name, [class*=author] .name')||{{}}).innerText||''),
                 }};
               }}).filter(x => x.note_id);
-            }})()""")
+            }})()"""
+            r = []
+            for attempt in range(4):
+                time.sleep(3)
+                r = self._ev(ws, expr)
+                if r:
+                    break
+                print(f"  [xhs] 第{attempt+1}次未取到卡片，等待重试…")
             return [
                 {
                     "wid": x["note_id"],
