@@ -268,6 +268,24 @@ from lib.bench.store import BenchStore
 print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench.db')))"
 ```
 
+### 十、五平台采集接入（2026-10-12 第七轮）
+
+用户要求接入小红书、X、YouTube。登录态由用户在项目专用浏览器完成扫码（X）。
+
+| 平台 | Adapter | 通道 | 登录态 | 实测 |
+|---|---|---|---|---|
+| B站 | MediaCrawler | MC 搜索+DOM | cookie 注入 | 19 works |
+| 抖音 | `douyin_dom.py` | 页面内 fetch（自动签名） | 58条含httpOnly | 40 works |
+| 小红书 | `xhs_search.py` | 搜索页 DOM 解析 | 16条含web_session | 18 works（IP风控已解除）|
+| X | `x_dom.py` | 搜索/时间线 DOM 解析 | 14条含auth_token+ct0 | 8 works（用户扫码）|
+| YouTube | `youtube.py` | yt-dlp ytsearch（走代理） | 无需 | 15 works |
+
+技术要点：
+- X 的 GraphQL 直调 404（x-client-transaction-id 一次性绑定，重放无效）→ DOM 路线
+- 小红书 API 裸 fetch 500（X-s/X-t 由页面 JS 拦截器注入）→ DOM 路线
+- YouTube 无需登录，yt-dlp 需代理（https_proxy=127.0.0.1:7897）
+- 对标库总计：**100 条真实作品**
+
 ### 闭环状态
 
 **B站线已实现全闭环**：采集(MC) → 入库 → 下载(yt-dlp) → 原料包(抽帧+ASR) → LLM拆解 → 资产库 → 初稿 → LLM扩写 → 人审队列。剩余：抖音需重新登录 cookie，小红书等风控冷却。
