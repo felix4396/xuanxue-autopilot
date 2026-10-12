@@ -121,6 +121,16 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
             json.dumps(comments, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # ---- 4. 元数据 meta.json ----
+    # 媒体状态：可选件——有就存，没有就标注原因（兼容纯文本内容）
+    media_files = sorted([p.name for p in dest.glob("media*")])
+    if media_files:
+        media_meta = {"status": "ok", "files": media_files, "type": "video" if any(f.endswith(".mp4") for f in media_files) else "image"}
+    elif media_src is None:
+        media_meta = {"status": "no_media", "files": [], "type": None,
+                      "reason": "该作品为纯文本内容或平台未提供媒体"}
+    else:
+        media_meta = {"status": "failed", "files": [], "type": None,
+                      "reason": "媒体文件下载失败（源失效/风控/格式不支持）"}
     meta = {
         "wid": wid,
         "platform": platform,
@@ -139,6 +149,7 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
             "danmaku": _fmt_count(mc.get("video_danmaku")),
             "coins": _fmt_count(mc.get("video_coin_count")),
         },
+        "media": media_meta,
         "keyword": mc.get("source_keyword") or extra.get("source_kw") or "",
         "cover_url": extra.get("cover_url") or mc.get("video_cover_url") or "",
         "media_url": extra.get("media_url") or mc.get("video_url") or "",

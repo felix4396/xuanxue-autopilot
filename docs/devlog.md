@@ -317,3 +317,15 @@ print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench
 当前覆盖：145 条全平台作品，19 条带评论（B站 MC 采集的），4 条带媒体（已下载过的）。
 
 新模块 `lib/corpus.py`；`harvest.py` 采集完自动导出，或 `--export-only` 单独跑。
+
+
+## 十二、全平台媒体补抓与兼容（2026-10-12）
+
+- meta.json 新增 `media` 字段标注三态：`ok`（有文件）/`no_media`（纯文本内容，正常态）/`failed`（下载失败）
+  ——媒体是可选件：图文存图、视频存视频、纯文本只留文案+元数据
+- xhs download_media 支持多图（xhs-{wid}-1..n.jpg）；token 映射批量补抓 11 条
+- douyin 破解：blob 是 MSE，真实直链在 douyinvod.com 网络请求里（reload 监听抓取，带签名可直接 curl）
+  → DouyinDomAdapter.fetch_video_url/download_media 实现，批量补抓 44/45 成功
+- yt-dlp 修复：B站需 avc1+audio 合流（--merge-output-format mp4）；YouTube 需 --js-runtimes node + 720p 宽松格式
+- 全平台对账：B站19/19、抖音44/45、YouTube25/25、小红书12/38（其余26条纯图文需逐条token，属正常 no_media）、X 2/18（8条纯文本推文+8条旧数据无handle）
+- 新脚本 scripts/backfill_media.py 批量补抓入口

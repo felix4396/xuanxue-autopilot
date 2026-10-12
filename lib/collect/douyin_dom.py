@@ -257,8 +257,52 @@ class DouyinDomAdapter(BaseAdapter):
         finally:
             self._close(ws)
 
-    def download_media(self, wid: str, url: str) -> Path:
-        raise NotImplementedError(
-            "抖音视频下载需新 cookies 方案（yt-dlp extractor 已失效）；"
-            "元数据采集不受影响，媒体下载待接 MediaCrawler 下载器或 TikHub"
-        )
+    def fetch_video_url(self, wid: str) -> str:
+        """打开视频页 reload，从网络请求抓 douyinvod 直链（带签名的完整 mp4）。
+
+        blob: 是 MSE 包装；真实直链在 Network 请求里（douyinvod.com/video/tos/...）。
+        """
+        self.limiter.wait("douyin")
+        ws = self._open(f"https://www.douyin.com/video/{wid}", wait=8.0)
+        try:
+            import json as _json
+            ws.send(_json.dumps({"id": 1, "method": "Network.enable"}))
+            ws.recv()
+            ws.send(_json.dumps({"id": 2, "method": "Page.reload"}))
+            ws.recv()
+            best = ""
+            deadline = time.time() + 20
+            ws.settimeout(3)
+            while time.time() < deadline:
+                try:
+                    m = _json.loads(ws.recv())
+                except websocket.WebSocketTimeoutException:
+                    continue
+                except Exception:
+                    break
+                if m.get("method") == "Network.requestWillBeSent":
+                    u = m["params"]["request"]["url"]
+                    if "douyinvod.com" in u and "/video/tos/" in u:
+                        # 抓最大的（分辨率最高）：URL 无大小标记，取最后出现的完整 mp4
+                        best = u
+            return best
+        finally:
+            self._close(ws)
+
+    def download_media(self, wid: str, url: str,
+                       dest: str | Path = "output/media") -> Path:
+        """下载抖音视频（douyinvod 直链，带签名）。"""
+        import requests as _rq
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        out = dest / f"douyin-{wid}.mp4"
+        if out.exists():
+            return out
+        src = self.fetch_video_url(wid)
+        if not src:
+            raise RuntimeError(f"抖音 {wid} 未抓到视频直链")
+        r = _rq.get(src, timeout=120, headers={"User-Agent": "Mozilla/5.0",
+                                               "Referer": "https://www.douyin.com/"})
+        r.raise_for_status()
+        out.write_bytes(r.content)
+        return out

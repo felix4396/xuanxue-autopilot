@@ -271,18 +271,26 @@ class XhsSearchAdapter(BaseAdapter):
         dest = Path(dest)
         dest.mkdir(parents=True, exist_ok=True)
         d = self.fetch_note_detail(wid, xsec_token)
+        hdrs = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"}
         if d["video"]:
             out = dest / f"xhs-{wid}.mp4"
-            src = d["video"]
-        elif d["images"]:
-            out = dest / f"xhs-{wid}.jpg"
-            src = d["images"][0]
-        else:
-            raise RuntimeError(f"笔记 {wid} 无可下载媒体")
-        if out.exists():
+            if out.exists():
+                return out
+            r = _rq.get(d["video"], timeout=120, headers=hdrs)
+            r.raise_for_status()
+            out.write_bytes(r.content)
             return out
-        r = _rq.get(src, timeout=60, headers={
-            "User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"})
-        r.raise_for_status()
-        out.write_bytes(r.content)
-        return out
+        if d["images"]:
+            outs = []
+            for i, src in enumerate(d["images"], 1):
+                out = dest / (f"xhs-{wid}.jpg" if len(d["images"]) == 1
+                              else f"xhs-{wid}-{i}.jpg")
+                if out.exists():
+                    outs.append(out)
+                    continue
+                r = _rq.get(src, timeout=60, headers=hdrs)
+                r.raise_for_status()
+                out.write_bytes(r.content)
+                outs.append(out)
+            return outs[0]
+        raise RuntimeError(f"笔记 {wid} 无可下载媒体")
