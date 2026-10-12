@@ -244,7 +244,7 @@ YouTube:  yt-dlp ────────────────── 已打�
 | 平台 | 结果 |
 |---|---|
 | **B站** | ✅ **完整跑通**：cookie 登录 → 搜索「玄学」→ 19 条作品 + 19 个账号入对标库（头部：120分钟玄学秘术合集 13.2万赞、倪海厦易经 7.8万赞）→ 取 2.7万赞爆款「算命真的准吗」→ yt-dlp 下载 69MB → 抽帧 358 张 + ASR 143 段 → LLM 拆解（观点体/钩子分）→ 入资产库 → 出初稿 → LLM 扩写成稿（标题/开头/正文/CTA 全齐）|
-| 抖音 | ✅ **第七轮突破（抓包+逆向验证）：页面内 fetch 方案成立**。外部直调接口不可行（搜索返回 verify_check；post 接口 403 ArgusSecurityPlugin——签名与 TLS/JS环境强绑定，离浏览器无法伪造）。正解：CDP 在 douyin.com 页面上下文发 fetch(credentials:include)，页面 JS 拦截器自动注入全套签名，服务端全放行。实测：云溪爱玄学 18 条作品（赞/评/无水印视频直链）→ 入对标库 → 视频下载 6.3MB → ASR → LLM 拆解 → 成稿。**抖音线全闭环**。搜索接口仍被验证中心拦（对标账号发现走 TikHub 用户搜索 0.001刀/次） |
+| 抖音 | ✅ **第七轮突破（抓包+逆向验证）：页面内 fetch 方案成立**。外部直调接口不可行（搜索返回 verify_check；post 接口 403 ArgusSecurityPlugin——签名与 TLS/JS环境强绑定，离浏览器无法伪造）。正解：CDP 在 douyin.com 页面上下文发 fetch(credentials:include)，页面 JS 拦截器自动注入全套签名，服务端全放行。实测：云溪爱玄学 18 条作品（赞/评/无水印视频直链）→ 入对标库 → 视频下载 6.3MB → ASR → LLM 拆解 → 成稿。**抖音线全闭环**。进一步突破：搜索接口在**搜索页上下文**内 fetch 也放行（13条结果含对标账号sec_uid），post 接口必须在**该用户主页上下文**发。至此抖音搜索→选号→全作品→下载 全免费闭环，TikHub 无需充值 |
 | 抖音旧结论 | ~~cookie 登录失败~~ 实为 MediaCrawler 登录检查机制不适配新版抖音（localStorage 判定超时），且 COOKIES 共享变量被 B站覆盖过——已建 `scripts/mc_cookie.sh` 按平台切换 |
 | 小红书 | 待 IP 风控冷却（MediaCrawler 支持 xhs 平台；DouyinDomAdapter 的 CDP 模式可复用到 xhs） |
 

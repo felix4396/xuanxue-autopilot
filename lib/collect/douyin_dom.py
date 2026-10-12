@@ -136,19 +136,97 @@ class DouyinDomAdapter(BaseAdapter):
             ws.close()
 
     # -- BaseAdapter -------------------------------------------------
+    def search(self, keyword: str, count: int = 15) -> list[dict]:
+        """页面内 fetch 搜索接口。
+
+        关键：必须在 **搜索页上下文**（www.douyin.com/search/...）里发 fetch，
+        首页上下文会被 verify_check 拦。搜索页 tab 由 fetch_search_page 打开。
+        返回作品列表（含 author.sec_uid 可继续抓该账号全部作品）。
+        """
+        import urllib.parse
+        kw = urllib.parse.quote(keyword)
+        ws = self._open_search_page(kw)
+        try:
+            path_qs = (
+                "/aweme/v1/web/general/search/single/?search_channel=aweme_general"
+                "&enable_history=1&keyword=" + kw +
+                "&search_source=tab_search&query_correct_type=1&is_filter_search=0"
+                "&from_group_id=7378810571505847586&offset=0&count=" + str(count) +
+                "&need_filter_settings=1&list_type=multi&search_id="
+                "&" + self.COMMON_PARAMS
+            )
+            data = self._page_fetch_on(ws, path_qs)
+            items = data.get("data") or []
+            if not isinstance(items, list):
+                raise RuntimeError(f"搜索接口异常: {json.dumps(data, ensure_ascii=False)[:120]}")
+            return [
+                {
+                    "wid": a.get("aweme_id"),
+                    "title": a.get("desc", ""),
+                    "author": (a.get("author") or {}).get("nickname", ""),
+                    "sec_uid": (a.get("author") or {}).get("sec_uid", ""),
+                    "likes": (a.get("statistics") or {}).get("digg_count", 0),
+                    "comments": (a.get("statistics") or {}).get("comment_count", 0),
+                    "media_url": f"https://www.douyin.com/video/{a.get('aweme_id')}",
+                }
+                for x in items
+                if (a := x.get("aweme_info"))
+            ][:count]
+        finally:
+            ws.close()
+
+    def _open_search_page(self, kw_quoted: str) -> websocket.WebSocket:
+        """打开（或复用）搜索结果页 tab，返回其 ws 连接。"""
+        url = f"https://www.douyin.com/search/{kw_quoted}"
+        tabs = requests.get(f"{self.cdp}/json/list", timeout=5).json()
+        tab = next((t for t in tabs if isinstance(t, dict)
+                    and url in (t.get("url") or "")), None)
+        if not tab:
+            requests.put(f"{self.cdp}/json/new?{url}", timeout=8)
+            time.sleep(7)
+            tabs = requests.get(f"{self.cdp}/json/list", timeout=5).json()
+            tab = next((t for t in tabs if isinstance(t, dict)
+                        and url in (t.get("url") or "")), None)
+        return websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+
+    def _page_fetch_on(self, ws: websocket.WebSocket, path_qs: str) -> dict:
+        """在指定 ws 会话（页面上下文）内 fetch，自动签名。"""
+        expr = (
+            "(async () => { const r = await fetch('" + path_qs + "',"
+            " {credentials:'include'}); const d = await r.json();"
+            " return JSON.stringify(d); })()"
+        )
+        ws.send(json.dumps({
+            "id": 1, "method": "Runtime.evaluate",
+            "params": {"expression": expr, "awaitPromise": True, "returnByValue": True},
+        }))
+        t0 = time.time()
+        while time.time() - t0 < 30:
+            m = json.loads(ws.recv())
+            if m.get("id") == 1:
+                val = m["result"]["result"]["value"]
+                return json.loads(val) if isinstance(val, str) else val
+        raise TimeoutError("页面内 fetch 超时")
+
     def fetch_works(self, uid: str, limit: int = 20) -> list[dict]:
         """uid: 抖音 sec_user_id。页面内 fetch 用户作品接口（含赞/评数据）。
 
         实测可用（绕过 verify_check 风控），has_more 分页由 max_cursor 翻页。
         """
         sec_uid = uid.split("user/")[-1].split("?")[0] if uid.startswith("http") else uid
-        data = self._page_fetch(
-            "/aweme/v1/web/aweme/post/?"
-            + self.COMMON_PARAMS
-            + f"&sec_user_id={sec_uid}&max_cursor=0&locate_query=false"
-              "&show_live_replay_strategy=1&need_module_list=1&list_type=multi"
-              f"&count={min(limit, 20)}"
-        )
+        # post 接口必须在**该用户自己的主页上下文**里发（实测首页/搜索页上下文会被风控拦）
+        ws = self._open(f"https://www.douyin.com/user/{sec_uid}", wait=8.0)
+        try:
+            data = self._page_fetch_on(
+                ws,
+                "/aweme/v1/web/aweme/post/?"
+                + self.COMMON_PARAMS
+                + f"&sec_user_id={sec_uid}&max_cursor=0&locate_query=false"
+                  "&show_live_replay_strategy=1&need_module_list=1&list_type=multi"
+                  f"&count={min(limit, 20)}"
+            )
+        finally:
+            ws.close()
         if data.get("status_code") != 0 and not data.get("aweme_list"):
             raise RuntimeError(f"抖音接口异常: {json.dumps(data, ensure_ascii=False)[:120]}")
         return [
