@@ -189,6 +189,95 @@ class XhsSearchAdapter(BaseAdapter):
             except Exception:
                 pass
 
+    def fetch_note_detail_batch(self, items: list[tuple[str, str]],
+                                dest: str | Path = "output/media") -> list[tuple[str, Path | None, str]]:
+        """批量详情+下载（单 tab SPA 复用，避免逐条开关页面的重复开销与风控暴露）。
+
+        items: [(note_id, xsec_token)]。返回 [(wid, 首媒体路径|None, 错误|空)]。
+        """
+        import requests as _rq
+        results = []
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        ws = None
+        try:
+            for note_id, token in items:
+                try:
+                    if not token:
+                        results.append((note_id, None, "no_token"))
+                        continue
+                    url = (f"https://www.xiaohongshu.com/explore/{note_id}"
+                           f"?xsec_token={token}&xsec_source=pc_search")
+                    if ws is None:
+                        ws, _tab = self._open(url, wait=10.0)
+                    else:
+                        # 无条件重连：location.href 导航后旧 context 作废（"Cannot find context"）
+                        self._ev(ws, f"location.href={json.dumps(url)}; 1")
+                        time.sleep(6)
+                        try:
+                            ws.close()
+                        except Exception:
+                            pass
+                        tab2 = next((t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                                     if isinstance(t, dict) and url.split("?")[0] in (t.get("url") or "")), None)
+                        if tab2 is None:
+                            results.append((note_id, None, "tab_lost"))
+                            continue
+                        ws = websocket.create_connection(tab2["webSocketDebuggerUrl"], timeout=30)
+                        ws.settimeout(40)
+                    r = {}
+                    for _ in range(5):
+                        time.sleep(3)
+                        r = self._ev(ws, """(() => {
+                          const nm = (window.__INITIAL_STATE__ && window.__INITIAL_STATE__.note
+                            && window.__INITIAL_STATE__.note.noteDetailMap) || {};
+                          for (const [nid, nd] of Object.entries(nm)) {
+                            if (!nid.startsWith('""" + note_id[:16] + """')) continue;
+                            const n = (nd||{}).note || {};
+                            if (!n.noteId) continue;
+                            const media = (((n.video||{}).media||{}).stream) || {};
+                            let videoUrl = '';
+                            for (const k of ['EF4','EF6','EF5','EF7']) {
+                              if (media[k] && media[k][0] && media[k][0].masterUrl) { videoUrl = media[k][0].masterUrl; break; }
+                            }
+                            return {images: (n.imageList||[]).map(i => i.urlDefault || ''),
+                                    videoUrl, type: n.type || ''};
+                          }
+                          return null;
+                        })()""")
+                        if r:
+                            break
+                    if not r:
+                        results.append((note_id, None, "not_rendered"))
+                        continue
+                    hdrs = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"}
+                    if r.get("videoUrl"):
+                        out = dest / f"xhs-{note_id}.mp4"
+                        if not out.exists():
+                            resp = _rq.get(r["videoUrl"], timeout=120, headers=hdrs)
+                            resp.raise_for_status()
+                            out.write_bytes(resp.content)
+                    elif r.get("images"):
+                        out = None
+                        for i, src in enumerate(r["images"], 1):
+                            o = dest / (f"xhs-{note_id}.jpg" if len(r["images"]) == 1
+                                        else f"xhs-{note_id}-{i}.jpg")
+                            if not o.exists():
+                                resp = _rq.get(src, timeout=60, headers=hdrs)
+                                resp.raise_for_status()
+                                o.write_bytes(resp.content)
+                            out = out or o
+                    else:
+                        results.append((note_id, None, ""))
+                        continue
+                    results.append((note_id, out, ""))
+                except Exception as e:
+                    results.append((note_id, None, str(e)[:60]))
+        finally:
+            if ws:
+                ws.close()
+        return results
+
     def fetch_note_detail(self, note_id: str, xsec_token: str = "") -> dict:
         """带 xsec_token 直开 explore 页 → 从 __INITIAL_STATE__.note 解析详情+媒体直链。
 

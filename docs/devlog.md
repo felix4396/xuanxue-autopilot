@@ -329,3 +329,25 @@ print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench
 - yt-dlp 修复：B站需 avc1+audio 合流（--merge-output-format mp4）；YouTube 需 --js-runtimes node + 720p 宽松格式
 - 全平台对账：B站19/19、抖音44/45、YouTube25/25、小红书12/38（其余26条纯图文需逐条token，属正常 no_media）、X 2/18（8条纯文本推文+8条旧数据无handle）
 - 新脚本 scripts/backfill_media.py 批量补抓入口
+
+
+## 十三、统一采集 CLI 与三场景能力（2026-10-12）
+
+新 `scripts/collect.py` 三个子命令：
+1. `kw-download` 关键词批量下载（xhs 走搜索 token 卡片→单 tab 批量详情；douyin 走 douyinvod 直链）
+2. `user-download` 用户作品批量下载（xhs：搜昵称→作品卡 token；douyin/x: fetch_works+download_media）
+3. `profiles` 用户信息采集（昵称/粉丝数/作品数）→ accounts 表
+
+逆向结论（profile 页 SSR 降级是共性）：
+- xhs 用户页直链 → 空壳；正路是搜索结果顶部用户卡片"粉丝・N｜笔记・N"（全角点・U+30FB）
+- douyin /search 直开 502；用户页直链 SSR 空壳；正路是任意 douyin 页搜索框内部输入
+  （execCommand+Enter，内部导航带完整签名），结果卡"N万粉丝"
+- X 用户页 DOM 文本"71.9K Followers"解析；_num 支持 K/M/万/亿
+
+性能优化：
+- xhs fetch_note_detail_batch 单 tab 复用，导航后无条件重连 ws（location.href SPA 后
+  旧 execution context 作废，"Cannot find context"——探活不可靠，必须重建）
+- 清理 25 个残留 tab（失败重试堆积）；douyin tab 保活复用不再开关
+- yt-dlp 统一 720p 宽松格式 + --js-runtimes node
+
+已知边界：xhs 高频搜索触发扫码验证（300011 升级版），需人工扫码恢复；冷却后正常。
