@@ -35,8 +35,58 @@ class XhsSearchAdapter(BaseAdapter):
 
     def __init__(self, cdp_base: str = CDP):
         self.cdp = cdp_base.rstrip("/")
-        # 小红书风控史：控频要保守
+        # 小红书风控史：控频要保守（RateLimiter 内部再做高斯抖动 20-60s）
         self.limiter = RateLimiter(interval=45.0)
+        # APM 风控上报拦截：检测到 isRiskUser 标记时告警
+        self.limiter.set_risk_callback(self._on_risk_detected)
+        # 拟人化浏览穿插钩子：连续搜索 ≥4 次时插入"打开笔记停留+滚动"
+        self.limiter.register_browse_hook("xhs", self._human_browse_interlude)
+
+    def _on_risk_detected(self, platform: str, detail: str) -> None:
+        print(f"  [xhs][风控预警] APM 检测到 isRiskUser 标记: {detail[:80]} → 限速器已自动降速 2.5x")
+
+    def _human_browse_interlude(self) -> None:
+        """拟人化浏览穿插：打开一篇已采集笔记，停留 + 滚动，再回来。
+
+        socai 反爬规则确认：从搜索卡片点进详情（带 Referer 跳转链）是人，
+        直拼 URL 是机器。连续搜索 ≥4 次后由限速器自动触发。
+        """
+        import random as _rd
+        import sqlite3
+        try:
+            con = sqlite3.connect("data/bench.db")
+            row = con.execute(
+                "SELECT wid, extra FROM works WHERE platform='xhs' AND extra LIKE '%xsec_token%' "
+                "ORDER BY RANDOM() LIMIT 1").fetchone()
+            con.close()
+            if not row:
+                return
+            wid = row[0]
+            import json as _json
+            try:
+                token = (_json.loads(row[1]) or {}).get("xsec_token", "")
+            except _json.JSONDecodeError:
+                token = ""
+            # 浏览搜索页 → 点进一篇笔记（SPA），停留 5-15s，滚动 1-2 次，返回
+            self.limiter._last.pop("xhs", None)  # 浏览本身就是"等待"
+            dwell = _rd.uniform(5.0, 15.0)
+            try:
+                ws, tab = self._open(
+                    f"https://www.xiaohongshu.com/explore/{wid}"
+                    + (f"?xsec_token={token}&xsec_source=pc_search" if token else ""),
+                    wait=8.0)
+                time.sleep(dwell)
+                self._ev(ws, f"window.scrollTo(0, {int(_rd.uniform(200, 600))}); 1")
+                time.sleep(_rd.uniform(1.0, 3.0))
+                if _rd.random() < 0.5:
+                    self._ev(ws, f"window.scrollTo(0, {int(_rd.uniform(400, 900))}); 1")
+                    time.sleep(_rd.uniform(1.0, 2.5))
+                ws.close()
+            except Exception:
+                pass
+            print(f"  [xhs][拟人化] 浏览穿插完成（停留 {dwell:.0f}s）")
+        except Exception:
+            pass
 
     def name(self) -> str:
         return "xhs"
@@ -53,6 +103,67 @@ class XhsSearchAdapter(BaseAdapter):
                 val = m["result"]["result"]["value"]
                 return json.loads(val) if isinstance(val, str) else val
         raise TimeoutError("CDP evaluate 超时")
+
+    # -- APM 风控上报拦截（autoclaw risk_analyzer 方案） ----------------
+    # 原理：xhs 页面 JS 会把 isRiskUser 判定随 APM 埋点上报到 /api/khan/
+    # 或 /fe_api/burdock。我们在页面里 hook XHR/fetch send，命中含
+    # "isRiskUser":true 的 payload 时，把标记写到 window.__DSH_RISK__，
+    # 采集器每次操作后读一次——被打标前就降速，不等扫码。
+    RISK_PROBE_JS = """
+    (function() {
+      if (window.__DSH_RISK_HOOK__) return 'ALREADY';
+      window.__DSH_RISK_HOOK__ = true;
+      window.__DSH_RISK__ = false;
+      window.__DSH_RISK_DETAIL__ = '';
+      const origFetch = window.fetch;
+      window.fetch = function() {
+        try {
+          const body = arguments[1] && arguments[1].body;
+          if (body && typeof body === 'string' && body.includes('isRiskUser')) {
+            window.__DSH_RISK_DETAIL__ = body.slice(0, 200);
+            if (body.includes('"isRiskUser":true') || body.includes('isRiskUser\":1'))
+              window.__DSH_RISK__ = true;
+          }
+        } catch (e) {}
+        return origFetch.apply(this, arguments);
+      };
+      const origOpen = XMLHttpRequest.prototype.open;
+      const origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function(body) {
+        try {
+          if (body && typeof body === 'string' && body.includes('isRiskUser')) {
+            window.__DSH_RISK_DETAIL__ = body.slice(0, 200);
+            if (body.includes('"isRiskUser":true') || body.includes('isRiskUser\":1'))
+              window.__DSH_RISK__ = true;
+          }
+        } catch (e) {}
+        return origSend.apply(this, arguments);
+      };
+      return 'HOOKED';
+    })()
+    """
+
+    def _inject_risk_probe(self, ws) -> None:
+        """在当前页面注入 isRiskUser 上报拦截（幂等）。"""
+        try:
+            self._ev(ws, self.RISK_PROBE_JS)
+        except Exception:
+            pass
+
+    def _check_risk_flag(self, ws) -> bool:
+        """读取拦截到的风控标记；命中则通知限速器降速。"""
+        try:
+            flag = self._ev(ws, "!!window.__DSH_RISK__")
+            if flag:
+                detail = ""
+                try:
+                    detail = self._ev(ws, "window.__DSH_RISK_DETAIL__ || ''") or ""
+                except Exception:
+                    pass
+                self.limiter.mark_risk("xhs", detail)
+            return bool(flag)
+        except Exception:
+            return False
 
     def _open(self, url: str, wait: float = 9.0) -> tuple[websocket.WebSocket, dict]:
         before = {t["id"] for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
@@ -82,6 +193,7 @@ class XhsSearchAdapter(BaseAdapter):
         self.limiter.wait("xhs")
         kw = urllib.parse.quote(keyword)
         ws, tab = self._open(f"https://www.xiaohongshu.com/search_result?keyword={kw}")
+        self._inject_risk_probe(ws)
         try:
             expr = f"""(() => {{
               const feeds = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.search
@@ -103,6 +215,7 @@ class XhsSearchAdapter(BaseAdapter):
                 if r:
                     break
                 print(f"  [xhs] 第{attempt+1}次未取到结果，等待重试…")
+            self._check_risk_flag(ws)
             return [
                 {
                     "wid": x["note_id"],
@@ -210,6 +323,7 @@ class XhsSearchAdapter(BaseAdapter):
                            f"?xsec_token={token}&xsec_source=pc_search")
                     if ws is None:
                         ws, _tab = self._open(url, wait=10.0)
+                        self._inject_risk_probe(ws)
                     else:
                         # 无条件重连：location.href 导航后旧 context 作废（"Cannot find context"）
                         self._ev(ws, f"location.href={json.dumps(url)}; 1")
@@ -248,6 +362,7 @@ class XhsSearchAdapter(BaseAdapter):
                         if r:
                             break
                     if not r:
+                        self._check_risk_flag(ws)
                         results.append((note_id, None, "not_rendered"))
                         continue
                     hdrs = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"}
@@ -295,6 +410,7 @@ class XhsSearchAdapter(BaseAdapter):
         url = (f"https://www.xiaohongshu.com/explore/{note_id}"
                f"?xsec_token={xsec_token}&xsec_source=pc_search")
         ws, tab = self._open(url, wait=10.0)
+        self._inject_risk_probe(ws)
         try:
             # 等 SSR/hydration
             r = {}

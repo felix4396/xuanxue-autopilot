@@ -351,3 +351,16 @@ print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench
 - yt-dlp 统一 720p 宽松格式 + --js-runtimes node
 
 已知边界：xhs 高频搜索触发扫码验证（300011 升级版），需人工扫码恢复；冷却后正常。
+
+
+## 十四、三阶防打标（2026-10-12）
+
+1. 高斯抖动：RateLimiter 改 random.uniform(20,60)+偶发长停顿(8%概率 90-180s)
+   ——固定 30s 本身是机器特征（请求序列方差被风控比对）
+2. 拟人化穿插：连续搜索≥4次自动插入"打开已采集笔记+停留5-15s+滚动1-2次"
+   ——socai 反爬规则确认"从搜索卡片点进详情"是人、"直拼URL"是机器
+3. APM 风控上报拦截：页面内 hook fetch/XHR send，命中含 isRiskUser:true 的
+   上报 payload 时写 window.__DSH_RISK__，采集器每次操作后读取——
+   账号被打标前就主动降速 2.5x，不等扫码验证
+
+实测：probe HOOKED、抖动序列 39/23/22/154s、browse 第5次触发。
