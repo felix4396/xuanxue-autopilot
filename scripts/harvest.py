@@ -84,7 +84,8 @@ def run_xhs(keywords: list[str], per_key: int, max_works: int, db: BenchStore) -
             if r.get("wid"):
                 db.upsert_work("xhs", r["wid"], uid=r["author"], title=r["title"],
                                likes=r["likes"],
-                               extra={"media_url": r.get("media_url", "")})
+                               extra={"media_url": r.get("media_url", ""),
+                                      "source_kw": kw})
                 stats["works"] += 1
         for nick in top:
             db.upsert_account("xhs", nick, nickname=nick)
@@ -100,16 +101,32 @@ def run_x(keywords: list[str], per_key: int, max_works: int, db: BenchStore) -> 
     for kw in keywords:
         print(f"[x] 搜索: {kw}")
         results = ad.search(kw, count=15)
-        seen = set()
+        # 聚合：handle → 累计赞，选头部账号拉时间线
+        by_handle = {}
+        meta = {}
         for r in results:
-            if not r.get("wid") or r["wid"] in seen:
+            h = (r.get("user_href") or "").lstrip("/").split("?")[0]
+            if not h:
                 continue
-            seen.add(r["wid"])
-            nick = (r.get("user") or "unknown").lstrip("@")
-            db.upsert_work("x", r["wid"], uid=nick, title=r["text"],
-                           likes=ad._parse_count(r.get("likes", "0")))
-            stats["works"] += 1
-        print(f"  +{stats['works']} works")
+            by_handle[h] = by_handle.get(h, 0) + ad._parse_count(r.get("likes", "0"))
+            meta[h] = (r.get("user") or h)
+        top = sorted(by_handle, key=by_handle.get, reverse=True)[:per_key]
+        for h in top:
+            nick = meta[h]
+            print(f"[x] 账号: {nick} (@{h})")
+            db.upsert_account("x", h, nickname=nick)
+            stats["accounts"] += 1
+            try:
+                works = ad.fetch_works(h, limit=max_works)
+            except Exception as e:
+                print(f"  时间线失败: {e}"); continue
+            for w in works:
+                db.upsert_work("x", w["wid"], uid=h, title=w["title"],
+                               likes=w["likes"], comments=w["comments"],
+                               extra={"nickname": nick,
+                                      "media_url": w.get("media_url", "")})
+            stats["works"] += len(works)
+            print(f"  +{len(works)} works")
     return stats
 
 

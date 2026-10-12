@@ -152,5 +152,59 @@ class XDomAdapter(BaseAdapter):
         mult = {"k": 1_000, "m": 1_000_000}.get(m.group(2).lower(), 1)
         return int(num * mult)
 
-    def download_media(self, wid: str, url: str) -> Any:
-        raise NotImplementedError("X 媒体下载需从推文详情页解析 pbs.twimg.com 直链，待接")
+    def fetch_media_urls(self, wid: str, handle: str) -> dict:
+        """推文详情页解析媒体直链（pbs.twimg 图 / video muxed 直链）。"""
+        self.limiter.wait("x")
+        ws, tab = self._open(f"https://x.com/{handle}/status/{wid}", wait=9.0)
+        try:
+            time.sleep(3)
+            r = self._ev(ws, """(() => {
+              const art = document.querySelector('article[data-testid="tweet"]');
+              if (!art) return {found: false};
+              const imgs = [...art.querySelectorAll('img[src*="pbs.twimg.com/media"]')].map(i => {
+                // 原图：去格式后缀加 ?format=jpg&name=orig
+                const m = i.src.match(/([^?]+)/);
+                return m ? m[1] + '?format=jpg&name=orig' : '';
+              }).filter(Boolean);
+              const vid = art.querySelector('video');
+              return {found: true, images: imgs,
+                      video: vid ? (vid.src || (vid.querySelector('source')||{}).src || '') : ''};
+            })()""")
+            if not r.get("found"):
+                raise RuntimeError(f"未找到推文 {wid}")
+            return {"images": r.get("images", []), "video": r.get("video", "")}
+        finally:
+            ws.close()
+            try:
+                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+            except Exception:
+                pass
+
+    def download_media(self, wid: str, url: str, handle: str = "",
+                       dest: str | Path = "output/media") -> Any:
+        """下载推文媒体（视频优先，否则首图）。handle: 作者 handle（不含@）。"""
+        import requests as _rq
+        from pathlib import Path as _P
+        if not handle:
+            # 从推文 URL 提取
+            m = re.match(r"https://x\.com/(\w+)/status/", url or "")
+            if not m:
+                raise ValueError("需要 handle 或含 handle 的 url")
+            handle = m.group(1)
+        dest = _P(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        media = self.fetch_media_urls(wid, handle)
+        if media["video"]:
+            out = dest / f"x-{wid}.mp4"
+            src = media["video"]
+        elif media["images"]:
+            out = dest / f"x-{wid}.jpg"
+            src = media["images"][0]
+        else:
+            raise RuntimeError(f"推文 {wid} 无媒体")
+        if out.exists():
+            return out
+        r = _rq.get(src, timeout=30)
+        r.raise_for_status()
+        out.write_bytes(r.content)
+        return out

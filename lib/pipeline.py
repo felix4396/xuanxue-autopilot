@@ -13,8 +13,10 @@ from lib.collect.ratelimit import RateLimiter
 from lib.analyze.assets import AssetStore
 from lib.analyze.doctor import DoctorRunner, import_doctor_report
 from lib.analyze.video import VideoPrep
+from lib.analyze.llm_analyze import analyze_transcript
 from lib.compose.draft import compose_from_analysis, adapt_platform
 from lib.compose.deaigen import deaigen_draft_body
+from lib.compose.llm_expand import expand_draft
 from lib.publish.queue import PublishQueue
 from lib.publish.dispatcher import Dispatcher
 from lib.review.metrics import MetricsStore
@@ -42,16 +44,42 @@ class Pipeline:
         return works[:limit]
 
     # ---- ③ 拆解 ----
-    def analyze_one(self, platform: str, wid: str, report: Path) -> dict:
-        """用 doctor 报告更新资产库，标记 analyzed。"""
-        result = import_doctor_report(report, platform, wid, self.assets)
+    def analyze_one(self, platform: str, wid: str, report: Path | None = None,
+                    stats: dict | None = None) -> dict:
+        """拆解入资产库，标记 analyzed。
+
+        两条路径：
+        - 传 report（doctor markdown）：走宽容解析（兼容旧路径）
+        - 不传 report：优先用 LLM 拆解本地 asr.json（output/media/{platform}-{wid}/asr.json）；
+          LLM 失败或无 asr 时抛错。
+        """
+        if report is not None:
+            result = import_doctor_report(report, platform, wid, self.assets)
+        else:
+            asr = self.out / "media" / f"{platform}-{wid}" / "asr.json"
+            if not asr.exists():
+                raise FileNotFoundError(f"无 doctor 报告也无 asr.json: {asr}")
+            title = ""
+            row = next((w for w in self.bench.list_works(platform) if w["wid"] == wid), None)
+            if row:
+                title = row.get("title") or ""
+            r = analyze_transcript(title or wid, asr, stats=stats)
+            # LLM 拆解结果直接写资产库（add_analysis 统一抽取 hooks/titles/covers）
+            self.assets.add_analysis(platform, wid, r)
+            result = r
         self.bench.mark(platform, wid, "analyzed")
         return result
 
     # ---- ④ 产出 ----
-    def compose(self, topic: str, analysis: dict, platform: str = "xhs", angle: str = "") -> Path:
+    def compose(self, topic: str, analysis: dict, platform: str = "xhs", angle: str = "",
+                use_llm: bool = True) -> Path:
         d = compose_from_analysis(topic, analysis, platform=platform, angle=angle)
-        d.body = deaigen_draft_body(d.body)          # 规则级去 AI 味
+        if use_llm:
+            try:
+                d = expand_draft(d, angle=angle)
+            except Exception as e:
+                print(f"[pipeline] LLM 扩写失败，退回模板+规则去AI味: {e}")
+        d.body = deaigen_draft_body(d.body)          # 规则级去 AI 味（LLM 稿也过一遍）
         adapt_platform(d, platform)
         reports = self.out / "reports"
         reports.mkdir(parents=True, exist_ok=True)

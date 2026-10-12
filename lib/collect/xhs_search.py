@@ -14,6 +14,7 @@ import json
 import re
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -74,25 +75,26 @@ class XhsSearchAdapter(BaseAdapter):
         return int(num * mult)
 
     def search(self, keyword: str, count: int = 20) -> list[dict]:
-        """搜索笔记。返回 title/likes/author/note_id（可继续 fetch_detail）。"""
+        """搜索笔记。从 __INITIAL_STATE__.search.feeds 直取（id + xsec_token 全齐）。
+
+        DOM 的 a.href 不带 token（点击时前端才从 state 拼），必须走 state 通道。
+        """
         self.limiter.wait("xhs")
         kw = urllib.parse.quote(keyword)
         ws, tab = self._open(f"https://www.xiaohongshu.com/search_result?keyword={kw}")
         try:
-            # 页面卡片懒渲染：0 张时等待重取（冷启动首跑渲染可能慢于 9s）
             expr = f"""(() => {{
-              const cards = [...document.querySelectorAll('section.note-item')].slice(0, {count});
-              return cards.map(s => {{
-                const a = s.querySelector('a[href*="/explore/"], a[href*="/search_result/"]');
-                const href = (a||{{}}).href || '';
-                const m = href.match(/(?:explore|search_result)\\/([0-9a-f]{{24}})/);
-                return {{
-                  note_id: m ? m[1] : null,
-                  title: ((s.querySelector('.title, a.title')||{{}}).innerText||'').slice(0,80),
-                  likes: (s.querySelector('.count, [class*=count]')||{{}}).innerText || '0',
-                  author: ((s.querySelector('.author .name, [class*=author] .name')||{{}}).innerText||''),
-                }};
-              }}).filter(x => x.note_id);
+              const feeds = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.search
+                && window.__INITIAL_STATE__.search.feeds;
+              const arr = feeds && (feeds.value || feeds) || [];
+              return arr.slice(0, {count}).map(n => ({{
+                note_id: (n.id||'').slice(0,24),
+                xsec_token: n.xsecToken || '',
+                title: ((n.noteCard||{{}}).displayTitle || (n.noteCard||{{}}).title || '').slice(0,80),
+                likes: (((n.noteCard||{{}}).interactInfo||{{}}).likedCount) || '0',
+                author: (((n.noteCard||{{}}).user||{{}}).nickname) || '',
+                type: (n.noteCard||{{}}).type || ''
+              }})).filter(x => x.note_id.length === 24);
             }})()"""
             r = []
             for attempt in range(4):
@@ -100,7 +102,7 @@ class XhsSearchAdapter(BaseAdapter):
                 r = self._ev(ws, expr)
                 if r:
                     break
-                print(f"  [xhs] 第{attempt+1}次未取到卡片，等待重试…")
+                print(f"  [xhs] 第{attempt+1}次未取到结果，等待重试…")
             return [
                 {
                     "wid": x["note_id"],
@@ -108,32 +110,11 @@ class XhsSearchAdapter(BaseAdapter):
                     "likes": self._parse_count(x.get("likes")),
                     "author": x.get("author", ""),
                     "media_url": f"https://www.xiaohongshu.com/explore/{x['note_id']}",
+                    "source_kw": keyword,
+                    "xsec_token": x.get("xsec_token", ""),
                 }
                 for x in r
             ]
-        finally:
-            ws.close()
-            try:
-                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
-            except Exception:
-                pass
-
-    def fetch_detail(self, note_id: str) -> dict:
-        """笔记详情（正文/图片数/互动数据）。控频 45s。"""
-        self.limiter.wait("xhs")
-        ws, tab = self._open(f"https://www.xiaohongshu.com/explore/{note_id}", wait=8.0)
-        try:
-            r = self._ev(ws, """(() => {
-              const title = (document.querySelector('#detail-title, [class*=title]')||{}).innerText || '';
-              const desc = (document.querySelector('#detail-desc, [class*=desc]')||{}).innerText || '';
-              const author = (document.querySelector('.username, [class*=author] [class*=name]')||{}).innerText || '';
-              const likeEl = document.querySelector('[class*=like] .count, [class*=like-wrapper] .count');
-              const imgs = document.querySelectorAll('img[class*=note], [class*=slide] img').length;
-              const video = !!document.querySelector('video');
-              return {title: title.slice(0,60), desc: desc.slice(0,300), author,
-                      likes: (likeEl||{}).innerText || '0', imgs, video};
-            })()""")
-            return {"wid": note_id, **r}
         finally:
             ws.close()
             try:
@@ -177,5 +158,164 @@ class XhsSearchAdapter(BaseAdapter):
             except Exception:
                 pass
 
-    def download_media(self, wid: str, url: str) -> Any:
-        raise NotImplementedError("小红书图片/视频下载待接（需从详情页解析 CDN 直链）")
+    def _grab_session_headers(self) -> dict:
+        """从页面任一 API 请求抓会话级头（X-S-Common/b3/xray——同会话内为常量，实测 8 接口同值）。"""
+        ws, tab = self._open("https://www.xiaohongshu.com/", wait=6.0)
+        try:
+            ws.send(json.dumps({"id": 1, "method": "Network.enable"})); ws.recv()
+            ws.send(json.dumps({"id": 2, "method": "Runtime.evaluate", "params": {
+                "expression": "location.reload(); 1", "returnByValue": True}}))
+            ws.recv()
+            deadline = time.time() + 12
+            ws.settimeout(3)
+            while time.time() < deadline:
+                try:
+                    m = json.loads(ws.recv())
+                except websocket.WebSocketTimeoutException:
+                    continue
+                except Exception:
+                    break
+                if m.get("method") == "Network.requestWillBeSent":
+                    h = {k.lower(): v for k, v in m["params"]["request"]["headers"].items()}
+                    if "x-s-common" in h:
+                        return {"X-S-Common": h["x-s-common"],
+                                "x-b3-traceid": h.get("x-b3-traceid", ""),
+                                "x-xray-traceid": h.get("x-xray-traceid", "")}
+            raise RuntimeError("未抓到会话头")
+        finally:
+            ws.close()
+            try:
+                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+            except Exception:
+                pass
+
+    def fetch_note_detail(self, note_id: str, xsec_token: str = "") -> dict:
+        """用页面内 _webmsxyw 现签 X-s/X-t + 会话常量头调 /api/sns/web/v1/feed 拿完整详情。
+
+        抓包逆向结论：
+        - X-s/X-t 绑定 method+path+body，必须逐请求现签（window._webmsxyw(path, data)）
+        - X-S-Common/x-b3-traceid/x-xray-traceid 会话内常量，不绑 URL
+        - feed body 必须带 xsec_source=pc_search + xsec_token（搜索结果链接里带的防风控 token）
+        """
+        if not getattr(self, "_session_hdrs", None):
+            self._session_hdrs = self._grab_session_headers()
+        # 在搜索结果页上下文发（与真实点击行为一致：Referer 为搜索页）
+        import urllib.parse as _up
+        ws, tab = self._open("https://www.xiaohongshu.com/search_result?keyword=%E7%8E%84%E5%AD%A6", wait=8.0)
+        try:
+            body = {"source_note_id": note_id,
+                    "image_formats": ["jpg", "webp", "avif"],
+                    "extra": {"need_body_topic": "1"},
+                    "xsec_source": "pc_search",
+                    "xsec_token": xsec_token}
+            expr = """(async () => {
+              const path = '/api/sns/web/v1/feed';
+              const body = __BODY__;
+              const sign = await window._webmsxyw(path, body);
+              const r = await fetch('https://edith.xiaohongshu.com' + path, {
+                method: 'POST', credentials: 'include',
+                headers: {'Content-Type': 'application/json',
+                  'X-s': sign['X-s'], 'X-t': String(sign['X-t']),
+                  'X-S-Common': __COMMON__, 'x-b3-traceid': __B3__, 'x-xray-traceid': __XRAY__},
+                body: JSON.stringify(body)});
+              return await r.text();
+            })()"""
+            expr = (expr.replace('__BODY__', json.dumps(body))
+                        .replace('__COMMON__', json.dumps(self._session_hdrs["X-S-Common"]))
+                        .replace('__B3__', json.dumps(self._session_hdrs["x-b3-traceid"]))
+                        .replace('__XRAY__', json.dumps(self._session_hdrs["x-xray-traceid"])))
+            ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+                                "params": {"expression": expr, "awaitPromise": True, "returnByValue": True}}))
+            t0 = time.time()
+            text = ""
+            while time.time() - t0 < 30:
+                m = json.loads(ws.recv())
+                if m.get("id") == 1:
+                    if "exceptionDetails" in m.get("result", {}):
+                        raise RuntimeError(f"页面执行失败: {json.dumps(m['result']['exceptionDetails'])[:150]}")
+                    text = m["result"]["result"]["value"] or ""
+                    break
+            j = json.loads(text)
+            if j.get("code") != 0:
+                raise RuntimeError(f"feed 接口 code={j.get('code')} msg={j.get('msg','')[:60]}")
+            items = (j.get("data") or {}).get("items") or []
+            note = (items[0].get("noteCard") if items else {}) or {}
+            user = (note.get("user") or {})
+            interact = note.get("interactInfo") or {}
+            video = ((note.get("video") or {}).get("media") or {}).get("streamUrl") or \
+                    (((note.get("video") or {}).get("media") or {}).get("videoUrl")) or ""
+            images = [i.get("urlDefault") or ((i.get("infoList") or [{}])[-1].get("url", ""))
+                      for i in (note.get("imageList") or [])]
+            return {"wid": note_id,
+                    "title": note.get("title") or note.get("displayTitle") or "",
+                    "desc": (note.get("desc") or "")[:500],
+                    "author": user.get("nickname") or user.get("userId") or "",
+                    "likes": self._parse_count(interact.get("likedCount", "0")),
+                    "comments": self._parse_count(interact.get("commentCount", "0")),
+                    "collects": self._parse_count(interact.get("collectedCount", "0")),
+                    "images": images, "video": video,
+                    "type": note.get("type", "")}
+        finally:
+            ws.close()
+            try:
+                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+            except Exception:
+                pass
+
+    def fetch_media_urls(self, keyword: str, note_id: str) -> dict:
+        """搜索页点进笔记（真实用户路径）→ 解析媒体直链。
+
+        直开 /explore/{id} 会空渲染（SSR noteDetailMap 为空，SPA 异步拉数据），
+        从搜索结果点进最稳。返回 {images: [...], video: str}。
+        """
+        self.limiter.wait("xhs")
+        kw = urllib.parse.quote(keyword)
+        ws, tab = self._open(f"https://www.xiaohongshu.com/search_result?keyword={kw}", wait=10.0)
+        try:
+            time.sleep(2)
+            hit = self._ev(ws, f"""(() => {{
+              const a = [...document.querySelectorAll('a[href*="{note_id}"]')][0];
+              if (!a) return {{found: false}};
+              a.click(); return {{found: true}};
+            }})()""")
+            if not hit.get("found"):
+                raise RuntimeError(f"搜索结果中未找到笔记 {note_id}")
+            time.sleep(6)
+            r = self._ev(ws, """(() => {
+              const video = document.querySelector('video');
+              const imgs = [...document.querySelectorAll('img')]
+                .map(i => i.src).filter(s => s.includes('xhscdn') && !s.includes('avatar')
+                  && !s.includes('formula-static') && !s.startsWith('data:'));
+              return {hasVideo: !!video,
+                      videoSrc: video ? (video.src || (video.querySelector('source')||{}).src || '') : '',
+                      images: imgs};
+            })()""")
+            return {"images": r.get("images", []), "video": r.get("videoSrc", "")}
+        finally:
+            ws.close()
+            try:
+                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+            except Exception:
+                pass
+
+    def download_media(self, wid: str, url: str, keyword: str = "玄学",
+                       dest: str | Path = "output/media") -> Path:
+        """下载笔记媒体（视频优先，否则首图）。dest 目录。"""
+        import requests as _rq
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        media = self.fetch_media_urls(keyword, wid)
+        if media["video"]:
+            out = dest / f"xhs-{wid}.mp4"
+            src = media["video"]
+        elif media["images"]:
+            out = dest / f"xhs-{wid}.jpg"
+            src = media["images"][0]
+        else:
+            raise RuntimeError(f"笔记 {wid} 无可下载媒体")
+        if out.exists():
+            return out
+        r = _rq.get(src, timeout=30, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"})
+        r.raise_for_status()
+        out.write_bytes(r.content)
+        return out

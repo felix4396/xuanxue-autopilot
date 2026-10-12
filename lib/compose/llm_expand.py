@@ -64,7 +64,14 @@ def expand_draft(
     new = Draft(topic=draft.topic, platform=draft.platform)
     new.titles = [t[:limit] for t in out.get("titles", draft.titles)][:3]
     new.cover_texts = draft.cover_texts
-    new.opening = out.get("opening", draft.opening)
-    new.body = out.get("body", draft.body)
-    new.cta = out.get("cta", draft.cta)
+    # 类型归一：LLM 可能返回 list/非字符串
+    opening = out.get("opening", draft.opening)
+    if isinstance(opening, list):
+        opening = " ".join(str(x) for x in opening)
+    new.opening = str(opening)
+    body = out.get("body", draft.body)
+    if isinstance(body, str):
+        body = [body]
+    new.body = [str(x) for x in body]
+    new.cta = str(out.get("cta", draft.cta))
     return new
