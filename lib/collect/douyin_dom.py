@@ -6,14 +6,21 @@
       --remote-debugging-port=9222 --remote-allow-origins='*' \\
       --user-data-dir="<项目>/data/browser-profile/xhs" --no-first-run &
 
-实测结论（2026-10-11）：
-- 搜索接口被 IP 级软风控（返回空，不弹验证码）
-- 用户主页可打开，但作品列表接口同样被软风控（'服务异常，重新刷新拉取数据'占位）
-- 视频详情页正常（标题/作者可解析）→ fetch_detail 可用
-- 解析严格限定 [data-e2e="user-post-list"] 容器，避免混入页面底部推荐流
-- sec_uid 来源：TikHub 用户搜索（单次 0.001 刀）或人工提供
-- yt-dlp 抖音 extractor 已失效（签名对抗），媒体下载暂缺
-- 适配器已就绪，IP 冷却或更换网络后即可使用
+实测结论（2026-10-11，抓包+逆向验证）：
+- **正解已找到：页面内 fetch**。在 douyin.com 页面上下文里用 CDP Runtime.evaluate
+  发 fetch(credentials:'include')，页面 JS 拦截器自动注入 a_bogus/msToken/Argus 全套签名，
+  环境一致 → 服务端全放行。实测用户作品接口 /aweme/v1/web/aweme/post/ 返回
+  200 + 17条作品含赞/评数据。
+- 外部直调（requests + MC 的 a_bogus JS 签名）不可行：
+  * 搜索接口：即使签名正确也返回 search_nil_type=verify_check（服务端要求人机验证）
+  * post 接口：403 ArgusSecurityPlugin "Uifid Not Found"/"Signature Not Found"
+    （Argus 校验 a_bogus 与 TLS指纹/JS环境一致性，脱离浏览器环境无法伪造）
+- 搜索接口在页面内 fetch 也被 verify_check 拦（前端验证中心组件拦截），但
+  **用户作品列表接口完全可用** → 对标账号发现走 TikHub 用户搜索（0.001刀/次），
+  作品采集走本 adapter。
+- yt-dlp 抖音 extractor 已失效；媒体下载待接（可从接口响应的 video.play_addr 直取）
+- cookie: data/browser-cookies/douyin.txt（58条含httpOnly sessionid）；msToken 取
+  localStorage.xmst（184字符），fetch 方案下无需手动传
 """
 from __future__ import annotations
 
@@ -84,54 +91,80 @@ class DouyinDomAdapter(BaseAdapter):
         finally:
             ws.close()
 
+    # -- 页面内 fetch（正解：借用页面 JS 签名环境） ---------------------
+    COMMON_PARAMS = (
+        "device_platform=webapp&aid=6383&channel=channel_pc_web"
+        "&version_code=190600&version_name=19.6.0&update_version_code=170400"
+        "&pc_client_type=1&cookie_enabled=true&browser_language=zh-CN"
+        "&browser_platform=MacIntel&browser_name=Chrome&browser_version=125.0.0.0"
+        "&browser_online=true&engine_name=Blink&os_name=Mac OS&os_version=10.15.7"
+        "&cpu_core_num=8&device_memory=8&platform=PC&screen_width=2560"
+        "&screen_height=1440&effective_type=4g&round_trip_time=50"
+        "&webid=7378810571505847586"
+    )
+
+    def _get_home_ws(self) -> websocket.WebSocket:
+        """拿一个已打开的 douyin.com 页面上下文（没有则新开）。"""
+        tabs = requests.get(f"{self.cdp}/json/list", timeout=5).json()
+        tab = next((t for t in tabs if isinstance(t, dict)
+                    and "www.douyin.com" in (t.get("url") or "")), None)
+        if not tab:
+            requests.put(f"{self.cdp}/json/new?https://www.douyin.com", timeout=8)
+            time.sleep(6)
+            tabs = requests.get(f"{self.cdp}/json/list", timeout=5).json()
+            tab = next(t for t in tabs if isinstance(t, dict)
+                       and "www.douyin.com" in (t.get("url") or ""))
+        return websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+
+    def _page_fetch(self, path_qs: str) -> dict:
+        """在 douyin.com 页面上下文内 fetch 抖音 API（页面 JS 自动完成签名）。"""
+        self.limiter.wait("douyin")
+        ws = self._get_home_ws()
+        try:
+            expr = (
+                "(async () => { const r = await fetch('" + path_qs + "',"
+                " {credentials:'include'}); const d = await r.json();"
+                " return JSON.stringify(d); })()"
+            )
+            ws.send(json.dumps({
+                "id": 1, "method": "Runtime.evaluate",
+                "params": {"expression": expr, "awaitPromise": True, "returnByValue": True},
+            }))
+            val = json.loads(ws.recv())["result"]["result"]["value"]
+            return json.loads(val) if isinstance(val, str) else val
+        finally:
+            ws.close()
+
     # -- BaseAdapter -------------------------------------------------
     def fetch_works(self, uid: str, limit: int = 20) -> list[dict]:
-        """uid: 抖音 sec_user_id 或用户主页 URL。解析用户主页作品列表。"""
-        url = uid if uid.startswith("http") else f"https://www.douyin.com/user/{uid}"
-        self.limiter.wait("douyin")
-        ws = self._open(url, wait=8.0)
-        try:
-            # 滚动触发懒加载
-            for _ in range(2):
-                self._ev(ws, "window.scrollTo(0, document.body.scrollHeight/2)")
-                time.sleep(3)
-            info = self._ev(ws, """({
-              nickname: (document.querySelector('[data-e2e="user-info"] .j5WZzJdp') || {}).innerText || '',
-              fans: ((document.querySelector('[data-e2e="user-info-fans"]') || {}).innerText || '').replace(/[^0-9.万千wW]/g, '')
-            })""")
-            # 只从 user-post-list 容器提取，避免混入页面底部"推荐"流
-            posts = self._ev(ws, """(() => {
-              const root = document.querySelector('[data-e2e="user-post-list"] ul[data-e2e="scroll-list"]');
-              if (!root) return {err: 'no list'};
-              if (root.querySelectorAll('a[href*="/video/"]').length === 0) {
-                const fail = document.querySelector('.Zj5Fgmnv');
-                return {err: fail ? 'rate_limited' : 'empty'};
-              }
-              return {vids: [...new Set(
-                [...root.querySelectorAll('a')]
-                  .filter(a => /video\\/(\\d+)/.test(a.href))
-                  .map(a => a.href.match(/video\\/(\\d+)/)[1])
-              )].slice(0, """ + str(limit) + """)};
-            })()""")
-            if isinstance(posts, dict) and "err" in posts:
-                if posts["err"] == "rate_limited":
-                    raise RuntimeError(
-                        "抖音用户作品列表被 IP 级软风控（'服务异常'占位）。"
-                        "等待冷却/更换网络后重试；视频详情页通常仍可用。")
-                return []  # 无作品或列表未加载
-            vids = posts["vids"]
-            return [
-                {
-                    "wid": v,
-                    "nickname": info.get("nickname", ""),
-                    "fans": info.get("fans", ""),
-                    "url": f"https://www.douyin.com/video/{v}",
-                    "title": "",  # 详情页补全
-                }
-                for v in vids
-            ]
-        finally:
-            self._close(ws)
+        """uid: 抖音 sec_user_id。页面内 fetch 用户作品接口（含赞/评数据）。
+
+        实测可用（绕过 verify_check 风控），has_more 分页由 max_cursor 翻页。
+        """
+        sec_uid = uid.split("user/")[-1].split("?")[0] if uid.startswith("http") else uid
+        data = self._page_fetch(
+            "/aweme/v1/web/aweme/post/?"
+            + self.COMMON_PARAMS
+            + f"&sec_user_id={sec_uid}&max_cursor=0&locate_query=false"
+              "&show_live_replay_strategy=1&need_module_list=1&list_type=multi"
+              f"&count={min(limit, 20)}"
+        )
+        if data.get("status_code") != 0 and not data.get("aweme_list"):
+            raise RuntimeError(f"抖音接口异常: {json.dumps(data, ensure_ascii=False)[:120]}")
+        return [
+            {
+                "wid": a.get("aweme_id"),
+                "title": a.get("desc", ""),
+                "likes": (a.get("statistics") or {}).get("digg_count", 0),
+                "comments": (a.get("statistics") or {}).get("comment_count", 0),
+                "shares": (a.get("statistics") or {}).get("share_count", 0),
+                "create_time": a.get("create_time"),
+                "media_url": f"https://www.douyin.com/video/{a.get('aweme_id')}",
+                # 视频直链（无水印）—— 下载用
+                "play_addr": (((a.get("video") or {}).get("play_addr") or {}).get("url_list") or [None])[0],
+            }
+            for a in (data.get("aweme_list") or [])[:limit]
+        ]
 
     def fetch_detail(self, wid: str) -> dict:
         """打开视频详情页取标题等元数据。"""
