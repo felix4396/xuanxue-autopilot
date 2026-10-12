@@ -302,3 +302,18 @@ print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench
 - `.gitignore` 已覆盖 `data/`、cookie、登录态、`.env`、key，凭证不入 Git。
 - 抓取控频 ≥ 30s/条（小红书 45s）；发布必须过 `pending_review` 人审网关（代码级强制）。
 - 内容二创需实质性改编，不直接搬运。
+
+
+## 十一、统一语料库（2026-10-12）
+
+五平台采集数据归集为标准化目录 `output/corpus/{platform}/{wid}/`：
+
+1. `content.md` — 正文文案（标题+正文/描述）
+2. `media.mp4` / `media-cover.jpg` — 媒体（视频优先；抽帧目录只导首帧封面）
+3. `comments.json` — 评论列表（user/content/likes/time/sub_comments）
+4. `meta.json` — 元数据（platform/source_url/user/metrics 七项互动数据/keyword/cover_url/采集时间）
+
+数据源：bench.db（互动数）+ MediaCrawler jsonl（B站完整互动数据+评论）+ output/media（媒体文件）。
+当前覆盖：145 条全平台作品，19 条带评论（B站 MC 采集的），4 条带媒体（已下载过的）。
+
+新模块 `lib/corpus.py`；`harvest.py` 采集完自动导出，或 `--export-only` 单独跑。

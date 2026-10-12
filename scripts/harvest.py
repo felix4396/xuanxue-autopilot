@@ -186,6 +186,13 @@ RUNNERS = {"douyin": run_douyin, "xhs": run_xhs, "x": run_x,
            "youtube": run_youtube, "bilibili": run_bilibili}
 
 
+def run_export(db: BenchStore) -> None:
+    """采集后自动导出统一语料库。"""
+    from lib.corpus import export_all
+    print("[corpus] 导出统一语料库...")
+    print(" ", export_all())
+
+
 def main():
     ap = argparse.ArgumentParser(description="跨平台批量采集入对标库")
     ap.add_argument("--keywords", required=True, help="逗号分隔")
@@ -193,11 +200,15 @@ def main():
                     help="逗号分隔，默认 douyin,xhs,youtube（x/bilibili 需显式开）")
     ap.add_argument("--per-key", type=int, default=2, help="每关键词选头部账号数（默认2）")
     ap.add_argument("--max-works", type=int, default=20, help="每账号最多拉作品数（默认20）")
+    ap.add_argument("--export-only", action="store_true", help="只导出统一语料库，不采集")
     args = ap.parse_args()
 
+    db = BenchStore(DB_PATH)
+    if args.export_only:
+        run_export(db)
+        return
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
     platforms = [p.strip() for p in args.platforms.split(",") if p.strip()]
-    db = BenchStore(DB_PATH)
     total = {"accounts": 0, "works": 0}
     for p in platforms:
         if p not in RUNNERS:
