@@ -364,3 +364,24 @@ print(import_mediacrawler_dir('vendor/MediaCrawler/data', BenchStore('data/bench
    账号被打标前就主动降速 2.5x，不等扫码验证
 
 实测：probe HOOKED、抖动序列 39/23/22/154s、browse 第5次触发。
+
+
+## 十五、微博采集器接入（2026-10-12）
+
+新 lib/collect/weibo_m.py — m.weibo.cn 游客态：
+- 逆向结论：s.weibo.com（PC 搜索）强制登录；m.weibo.cn 游客可用但直开
+  /api/container/getIndex 会 432（反爬）。正路与 douyinvod 同款：正常 SPA
+  页面加载时 Network 域监听，抓 getIndex XHR 响应体（200+，222KB）
+- 数据：data.cards[]，card_type=9 微博（mblog text/pics/page_info），
+  11 热区嵌套展开；翻页 page 参数
+- 图片防盗链：sinaimg Referer=m.weibo.cn 403，须 weibo.com（实测 200）
+- followers "56.5万" → _num_cn 转数字
+
+规格对齐：高斯抖动（weibo 18-50s）+ 拟人化穿插（status/{wid} 停留滚动）
++ APM 风控拦截（含 "code":-352/-100 微博特有风控码）
+
+三件套接入：collect.py kw-download/user-download/profiles、harvest RUNNERS、
+corpus 平台注册。附带修复：store.upsert_work extra 双重编码（dict/str 兼容）
++ metrics 回填 work 列 + corpus nickname 读 extra.user。
+
+当前语料：152 条（+6 微博），108 with_media。

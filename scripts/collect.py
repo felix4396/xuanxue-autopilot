@@ -64,6 +64,35 @@ def cmd_kw_download(args):
                         print(f"  ✅ {r['wid']} → {out.name}")
                     except Exception as e:
                         print(f"  {r['wid']} 失败: {str(e)[:50]}")
+            elif p == "weibo":
+                from lib.collect.weibo_m import WeiboMAdapter
+                ad = WeiboMAdapter()
+                for r in ad.search(kw, count=args.limit):
+                    try:
+                        out = ad.download_media(r["wid"], "", pics=r.get("pics") or None)
+                        db.upsert_work("weibo", r["wid"], uid=r.get("uid", ""),
+                                       title=r.get("title", ""),
+                                       media_path=str(out) if out else "",
+                                       extra=json.dumps({
+                                           "desc": r.get("desc", ""),
+                                           "likes": r.get("likes", 0),
+                                           "comments": r.get("comments", 0),
+                                           "shares": r.get("shares", 0),
+                                           "user": r.get("user", ""),
+                                           "source_kw": kw,
+                                           "pics": r.get("pics", []),
+                                           "media_url": r.get("media_url", ""),
+                                       }, ensure_ascii=False))
+                        if out:
+                            print(f"  ✅ {r['wid']} → {out.name}")
+                        else:
+                            print(f"  ✅ {r['wid']}（无媒体，文案已入库）")
+                    except Exception as e:
+                        db.upsert_work("weibo", r["wid"], uid=r.get("uid", ""),
+                                       title=r.get("title", ""),
+                                       extra=json.dumps({"desc": r.get("desc", ""), "source_kw": kw},
+                                                        ensure_ascii=False))
+                        print(f"  {r['wid']} 媒体失败: {str(e)[:45]}（文案已入库）")
     print("\n[corpus] 重导:", export_all())
 
 
@@ -137,6 +166,22 @@ def cmd_user_download(args):
             except Exception as e:
                 db.upsert_work("x", w["wid"], uid=handle, title=w.get("title", ""))
                 print(f"  {w['wid']} 无媒体: {str(e)[:40]}")
+    elif p == "weibo":
+        from lib.collect.weibo_m import WeiboMAdapter
+        ad = WeiboMAdapter()
+        for w in ad.fetch_works(args.uid, limit=args.limit):
+            try:
+                out = ad.download_media(w["wid"], "", pics=w.get("pics") or None)
+                db.upsert_work("weibo", w["wid"], uid=args.uid,
+                               title=w.get("title", ""),
+                               media_path=str(out) if out else "",
+                               extra=json.dumps({"desc": w.get("desc", ""),
+                                                 "likes": w.get("likes", 0),
+                                                 "user": w.get("user", "")},
+                                                ensure_ascii=False))
+                print(f"  ✅ {w['wid'][:18]} {'→ ' + out.name if out else '（文案已入库）'}")
+            except Exception as e:
+                print(f"  {w['wid'][:18]} 失败: {str(e)[:45]}")
     elif p in ("bilibili", "youtube"):
         print("  （bilibili/youtube 用户下载走 harvest --platforms 的账号维度，或 yt-dlp channel URL）")
     print("\n[corpus] 重导:", export_all())
@@ -156,8 +201,15 @@ def cmd_profiles(args):
         print(f"[{p}] 从库取 {len(uids)} 个账号")
     else:
         uids = [u.strip() for u in args.uids.split(",") if u.strip()]
-    fn = {"xhs": fetch_xhs_profile, "x": fetch_x_profile,
-          "douyin": fetch_douyin_profile}.get(p)
+    fn = None
+    if p == "weibo":
+        from lib.collect.weibo_m import WeiboMAdapter
+        ad_w = WeiboMAdapter()
+        fn = lambda a, u: ad_w.fetch_user_profile(u)
+        ad = ad_w
+    else:
+        fn = {"xhs": fetch_xhs_profile, "x": fetch_x_profile,
+              "douyin": fetch_douyin_profile}.get(p)
     if not fn:
         print(f"  {p} 暂无 profile 采集（bilibili/youtube 可从频道页取）")
         return
@@ -171,6 +223,8 @@ def cmd_profiles(args):
     elif p == "douyin":
         from lib.collect.douyin_dom import DouyinDomAdapter
         ad = DouyinDomAdapter()
+    elif p == "weibo":
+        pass  # ad 已在上方创建
     for uid in uids:
         try:
             prof = fn(ad, uid)

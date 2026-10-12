@@ -72,7 +72,7 @@ class BenchStore:
                 uid,
                 fields.get("nickname", ""),
                 fields.get("followers", 0),
-                json.dumps(fields.get("extra", {}), ensure_ascii=False),
+                self._norm_extra(fields.get("extra", {})),
                 now,
             ),
         )
@@ -87,6 +87,19 @@ class BenchStore:
         return [dict(r) for r in self.conn.execute(sql, args)]
 
     # ---- works ----
+    @staticmethod
+    def _norm_extra(e) -> str:
+        """dict → json；str 且本身是 json → 原样；其他 str → {"desc": ...}。"""
+        if isinstance(e, dict):
+            return json.dumps(e, ensure_ascii=False)
+        if isinstance(e, str):
+            try:
+                json.loads(e)
+                return e  # 已是合法 json
+            except json.JSONDecodeError:
+                return json.dumps({"desc": e}, ensure_ascii=False)
+        return json.dumps(e or {}, ensure_ascii=False)
+
     def upsert_work(self, platform: str, wid: str, uid: str = "", **fields) -> None:
         now = time.time()
         self.conn.execute(
@@ -108,7 +121,7 @@ class BenchStore:
                 fields.get("likes", 0),
                 fields.get("comments", 0),
                 fields.get("shares", 0),
-                json.dumps(fields.get("extra", {}), ensure_ascii=False),
+                self._norm_extra(fields.get("extra", {})),
                 now,
             ),
         )

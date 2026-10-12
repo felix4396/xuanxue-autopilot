@@ -182,8 +182,80 @@ def run_bilibili(keywords: list[str], per_key: int, max_works: int, db: BenchSto
     return {"accounts": stats["accounts"], "works": stats["works"]}
 
 
+def run_weibo(keywords: list[str], per_key: int, max_works: int, db: BenchStore) -> dict:
+    """微博 m.weibo.cn 游客采集：搜索 → 择优账号 → 用户作品。"""
+    from lib.collect.weibo_m import WeiboMAdapter
+    ad = WeiboMAdapter()
+    stats = {"accounts": 0, "works": 0}
+    for kw in keywords:
+        print(f"[weibo] 搜索: {kw}")
+        results = ad.search(kw, count=max_works)
+        if not results:
+            print("  无结果（风控或无匹配）")
+            continue
+        seen_uid = {}
+        for r in results:
+            if r.get("uid"):
+                seen_uid.setdefault(r["uid"], r.get("user", ""))
+        # 择优账号（互动数 top per_key）——这里先全存作品
+        for r in results:
+            try:
+                out = ad.download_media(r["wid"], r.get("video_url", ""),
+                                        pics=r.get("pics") or None)
+            except Exception:
+                out = None
+            db.upsert_work("weibo", r["wid"], uid=r.get("uid", ""),
+                           title=r.get("title", ""),
+                           media_path=str(out) if out else "",
+                           extra=json.dumps({
+                               "desc": r.get("desc", ""),
+                               "likes": r.get("likes", 0),
+                               "comments": r.get("comments", 0),
+                               "shares": r.get("shares", 0),
+                               "user": r.get("user", ""),
+                               "source_kw": kw,
+                               "media_url": r.get("media_url", ""),
+                           }, ensure_ascii=False))
+            stats["works"] += 1
+        # 头部账号入库 + 补作品
+        import json as _json
+        top = sorted(results, key=lambda x: x.get("likes", 0), reverse=True)
+        picked = []
+        for r in top:
+            if r.get("uid") and r["uid"] not in picked:
+                picked.append(r["uid"])
+                if len(picked) >= per_key:
+                    break
+        for uid in picked:
+            nick = next((r.get("user", "") for r in results if r.get("uid") == uid), "")
+            db.upsert_account("weibo", uid, nickname=nick)
+            prof = ad.fetch_user_profile(uid)
+            if prof:
+                db.upsert_account("weibo", uid, nickname=prof.get("nickname", ""),
+                                  followers=prof.get("followers"),
+                                  extra=_json.dumps(prof, ensure_ascii=False))
+                stats["accounts"] += 1
+            for w in ad.fetch_works(uid, limit=max_works // 2):
+                if not db.get_work("weibo", w["wid"]) if hasattr(db, "get_work") else True:
+                    try:
+                        out = ad.download_media(w["wid"], "", pics=w.get("pics") or None)
+                    except Exception:
+                        out = None
+                    db.upsert_work("weibo", w["wid"], uid=uid,
+                                   title=w.get("title", ""),
+                                   media_path=str(out) if out else "",
+                                   extra=_json.dumps({"desc": w.get("desc", ""),
+                                                      "likes": w.get("likes", 0),
+                                                      "user": w.get("user", "")},
+                                                     ensure_ascii=False))
+                    stats["works"] += 1
+        print(f"  +{len(results)} works, 账号 {len(picked)}")
+    return stats
+
+
 RUNNERS = {"douyin": run_douyin, "xhs": run_xhs, "x": run_x,
-           "youtube": run_youtube, "bilibili": run_bilibili}
+           "youtube": run_youtube, "bilibili": run_bilibili,
+           "weibo": run_weibo}
 
 
 def run_export(db: BenchStore) -> None:

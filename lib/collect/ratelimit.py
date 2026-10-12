@@ -20,6 +20,7 @@ JITTER_RANGE: dict[str, tuple[float, float]] = {
     "xhs": (20.0, 60.0),
     "douyin": (18.0, 50.0),
     "x": (20.0, 55.0),
+    "weibo": (18.0, 50.0),
     "bilibili": (8.0, 20.0),
     "youtube": (8.0, 20.0),
 }

@@ -137,7 +137,7 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
         "source_url": extra.get("media_url") or mc.get("video_url") or "",
         "user": {
             "uid": work.get("uid") or "",
-            "nickname": mc.get("nickname") or extra.get("nickname") or "",
+            "nickname": mc.get("nickname") or extra.get("nickname") or extra.get("user") or "",
         },
         "title": title,
         "metrics": {
@@ -169,7 +169,7 @@ def export_all(db_path: str = "data/bench.db", platforms: list[str] | None = Non
     mc_recs = _load_mc_records()
     mc_comments = _load_mc_comments()
     media_root = Path("output/media")
-    platforms = platforms or ["bilibili", "douyin", "xhs", "x", "youtube"]
+    platforms = platforms or ["bilibili", "douyin", "xhs", "x", "youtube", "weibo"]
     stats = {"exported": 0, "with_media": 0, "with_comments": 0, "skipped": 0}
     for p in platforms:
         for w in db.list_works(p):
