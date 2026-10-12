@@ -152,6 +152,58 @@ class XDomAdapter(BaseAdapter):
         mult = {"k": 1_000, "m": 1_000_000}.get(m.group(2).lower(), 1)
         return int(num * mult)
 
+    def fetch_video_variants(self, wid: str, handle: str) -> list[dict]:
+        """打开推文详情页，抓 TweetDetail GraphQL 响应，解析官方 video variants。
+
+        X 的 blob:<uuid> 是 MSE 包装；真实 muxed mp4 在 video_info.variants
+        （video.twimg.com/vid/avc1/...mp4，含音频，免 ffmpeg 合流）。
+        """
+        self.limiter.wait("x")
+        ws, tab = self._open(f"https://x.com/{handle}/status/{wid}", wait=8.0)
+        try:
+            import json as _json
+            ws.send(_json.dumps({"id": 1, "method": "Network.enable"}))
+            ws.recv()
+            ws.send(_json.dumps({"id": 2, "method": "Page.reload"}))
+            ws.recv()
+            gql_id, variants = None, None
+            deadline = time.time() + 20
+            ws.settimeout(3)
+            while time.time() < deadline:
+                try:
+                    m = _json.loads(ws.recv())
+                except websocket.WebSocketTimeoutException:
+                    continue
+                except Exception:
+                    break
+                meth = m.get("method", "")
+                if meth == "Network.requestWillBeSent" and "TweetDetail" in m["params"]["request"]["url"]:
+                    gql_id = m["params"]["requestId"]
+                elif meth == "Network.loadingFinished" and gql_id and m["params"]["requestId"] == gql_id:
+                    ws.send(_json.dumps({"id": 99, "method": "Network.getResponseBody",
+                                         "params": {"requestId": gql_id}}))
+                elif m.get("id") == 99:
+                    body = m.get("result", {}).get("body", "")
+                    import re
+                    variants = re.findall(
+                        r'"bitrate":(\d+)[^{}]*"content_type":"([^"]+)"[^{}]*"url":"([^"]+)"', body)
+                    break
+            if not variants:
+                raise RuntimeError(f"推文 {wid} 未抓到 video variants（可能无视频或未加载完）")
+            seen, out = set(), []
+            for b, ct, u in sorted(variants, key=lambda x: -int(x[0])):
+                if u in seen:
+                    continue
+                seen.add(u)
+                out.append({"bitrate": int(b), "content_type": ct, "url": u})
+            return out
+        finally:
+            ws.close()
+            try:
+                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+            except Exception:
+                pass
+
     def fetch_media_urls(self, wid: str, handle: str) -> dict:
         """推文详情页解析媒体直链（pbs.twimg 图 / video muxed 直链）。"""
         self.limiter.wait("x")
@@ -193,6 +245,20 @@ class XDomAdapter(BaseAdapter):
             handle = m.group(1)
         dest = _P(dest)
         dest.mkdir(parents=True, exist_ok=True)
+        # 视频优先：官方 variants 的最高码率 muxed mp4（含音频）
+        try:
+            variants = self.fetch_video_variants(wid, handle)
+            mp4s = [v for v in variants if v["content_type"] == "video/mp4"]
+            if mp4s:
+                out = dest / f"x-{wid}.mp4"
+                if out.exists():
+                    return out
+                r = _rq.get(mp4s[0]["url"], timeout=120)
+                r.raise_for_status()
+                out.write_bytes(r.content)
+                return out
+        except RuntimeError:
+            pass  # 无视频 variants，退回图片
         media = self.fetch_media_urls(wid, handle)
         if media["video"]:
             out = dest / f"x-{wid}.mp4"
