@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+
 import time
 from pathlib import Path
 
@@ -57,8 +59,25 @@ class Pipeline:
             result = import_doctor_report(report, platform, wid, self.assets)
         else:
             asr = self.out / "media" / f"{platform}-{wid}" / "asr.json"
+            corpus_md = self.out / "corpus" / platform / wid / "content.md"
+            meta_p = self.out / "corpus" / platform / wid / "meta.json"
+            if not asr.exists() and corpus_md.exists():
+                # 语料库路径：纯文本作品直接用 content.md 喂 LLM（无需 ASR）
+                from lib.analyze.llm_analyze import analyze_corpus_note
+                meta = {}
+                try:
+                    meta = json.loads(meta_p.read_text())
+                except (json.JSONDecodeError, OSError):
+                    pass
+                stats = meta.get("metrics") or {}
+                content = corpus_md.read_text()
+                title = meta.get("title") or content.splitlines()[0].lstrip("# ") if content else wid
+                r = analyze_corpus_note(platform, title, content, stats=stats)
+                self.assets.add_analysis(platform, wid, r)
+                self.bench.mark(platform, wid, "analyzed")
+                return r
             if not asr.exists():
-                raise FileNotFoundError(f"无 doctor 报告也无 asr.json: {asr}")
+                raise FileNotFoundError(f"无 asr.json 也无语料 content.md: {asr}")
             title = ""
             row = next((w for w in self.bench.list_works(platform) if w["wid"] == wid), None)
             if row:

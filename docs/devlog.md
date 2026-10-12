@@ -385,3 +385,23 @@ corpus 平台注册。附带修复：store.upsert_work extra 双重编码（dict
 + metrics 回填 work 列 + corpus nickname 读 extra.user。
 
 当前语料：152 条（+6 微博），108 with_media。
+
+
+## 十六、闭环补全：语料→拆解接线 + 互动回填 + 评论抓取（2026-10-12）
+
+1. corpus→analyze 接线：pipeline.analyze_one 加语料库路径——无 asr 时读
+   corpus/{p}/{wid}/content.md 喂 analyze_corpus_note（新增，与逐字稿拆解
+   同构输出）；scripts/analyze_all.py 批量拆解可断点续跑
+2. 互动回填：B站 19 条（MC jsonl）+ YouTube 25 条（yt-dlp --print like/view，
+   views 存 extra）+ B站账号粉丝 7/19（搜索 API bili_user 直接带 fans，
+   偶发风控返回非 JSON）+ douyin 2/xhs 1/x 1/youtube 全部账号粉丝补齐
+   （douyin feed-comment-icon 路径用户页、xhs 昵称搜索卡）
+3. 评论抓取 lib/collect/comments.py：
+   - 抖音：/video/{wid} 重定向 jingxuan feed → 点 feed-comment-icon（digg
+     兄弟层级1）→ 评论面板 DOM [data-e2e=comment-item] 解析（XHR body
+     有 CDP 竞态取不到，DOM 稳定）
+   - 微博：statuses/show?id= 对部分 wid "不合法的请求" → 改 detail/{wid}
+     自动发 comments/hotflow XHR（Network.enable 必须在导航前——重连后
+     开就错过事件）
+   - scripts/scrape_comments.py 按互动数 top 批量抓
+4. 语料：152 条 / 108 媒体 / 27 评论

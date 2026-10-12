@@ -48,3 +48,38 @@ def analyze_transcript(
         temperature=0.5,
     )
     return out
+
+
+CORPUS_PROMPT = """拆解以下对标笔记（{platform}）：
+
+标题：{title}
+平台互动数据：{stats}
+正文全文：
+{content}
+
+输出 JSON，字段：
+- hook: {{"second": 0, "text": 开头钩子内容概括（第一句如何抓人）}}
+- structure: 结构类型（清单体/故事体/教程体/观点体）
+- score: {{"hook": 钩子强度1-10(int)}}
+- title: 仿写一个同风格的新标题（15字内）
+- cover_template: 封面模板建议（如 big_text/人物+大字/清单封面）
+- takeaways: 可迁移观点数组，2-3条
+- why_viral: 爆款原因，1-2句"""
+
+
+def analyze_corpus_note(
+    platform: str,
+    title: str,
+    content: str,
+    stats: dict | None = None,
+) -> dict:
+    """拆解语料库纯文本笔记（content.md），输出与 analyze_transcript 同构。"""
+    out = chat_json(
+        CORPUS_PROMPT.format(platform=platform, title=title,
+                             stats=json.dumps(stats or {}, ensure_ascii=False),
+                             content=content[:6000]),
+        system=SYSTEM,
+        max_tokens=900,
+        temperature=0.5,
+    )
+    return out
