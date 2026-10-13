@@ -458,3 +458,46 @@ def scrape_bili_user_works(mid: str, limit: int = 25) -> list[dict]:
         return works
     finally:
         _cdp_close(ws, tab)
+
+
+def download_bili_video(bvid: str, out_path: str) -> Path:
+    """B站视频下载：qn=16 durl 正规 CDN 完整 mp4，Range 分段续传（绕 PCDN SSL 断连）。"""
+    import requests as _rq
+    from pathlib import Path as _P
+    out = _P(out_path)
+    if out.exists() and out.stat().st_size > 0:
+        return out
+    s = _rq.Session()
+    s.headers.update({"User-Agent": "Mozilla/5.0",
+                      "Referer": "https://www.bilibili.com"})
+    s.get("https://www.bilibili.com", timeout=10)
+    r = s.get("https://api.bilibili.com/x/web-interface/view",
+              params={"bvid": bvid}, timeout=15)
+    cid = r.json()["data"]["cid"]
+    r2 = s.get("https://api.bilibili.com/x/player/playurl",
+               params={"bvid": bvid, "cid": cid, "fnval": 1, "qn": 32}, timeout=15)
+    dd = r2.json()["data"]
+    item = dd["durl"][0]
+    url, total = item["url"], item["size"]
+    tmp = out.with_suffix(".part")
+    pos = tmp.stat().st_size if tmp.exists() else 0
+    import time as _t
+    for _ in range(60):
+        if pos >= total:
+            break
+        end = min(pos + 4 * 1024 * 1024 - 1, total - 1)
+        try:
+            rr = s.get(url, headers={"Range": f"bytes={pos}-{end}"}, timeout=60)
+            if rr.status_code not in (200, 206):
+                _t.sleep(3)
+                continue
+            with open(tmp, "ab") as f:
+                f.write(rr.content)
+            pos = tmp.stat().st_size
+        except Exception:
+            _t.sleep(3)
+            continue
+    if tmp.stat().st_size >= total:
+        tmp.rename(out)
+        return out
+    raise RuntimeError(f"分段下载不完整 {tmp.stat().st_size}/{total}")

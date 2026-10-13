@@ -128,16 +128,12 @@ def main():
             ok = 0
             import subprocess as _sp
             import pathlib as _pl
+            from lib.profiles import download_bili_video
             for w in works:
                 out = _pl.Path(f"output/media/bilibili-{w['bv']}.mp4")
                 if not out.exists():
                     try:
-                        _sp.run(["/Users/shiro/.agent-reach/bin/yt-dlp",
-                                 "-f", "bv*[height<=480]+ba/b[height<=480]/b",
-                                 "-o", str(out.with_suffix(".%(ext)s")),
-                                 "--no-playlist", "-q",
-                                 f"https://www.bilibili.com/video/{w['bv']}"],
-                                check=True, timeout=600)
+                        download_bili_video(w["bv"], str(out))
                     except Exception as e2:
                         print(f"    {w['bv']} 下载失败: {str(e2)[:40]}")
                         out = None
