@@ -49,10 +49,14 @@ def main():
             time.sleep(75)
         prev_platform = p
         extra = json.loads(extra_s or "{}")
-        # douyin profile 已成功的跳过（每轮重抓浪费 4 分钟/账号）
+        # douyin profile 已成功且作品足量才跳过
         if p == "douyin" and fans and fans > 0:
-            print(f"=== [{p}] {uid} 已有 profile ({fans} 粉)，跳过 ===")
-            continue
+            _n = db.conn.execute(
+                "SELECT count(*) FROM works WHERE platform='douyin' AND uid=? AND media_path!=''",
+                (uid,)).fetchone()[0]
+            if _n >= 10:
+                print(f"=== [{p}] {uid} 已有 profile+{_n} media，跳过 ===")
+                continue
         print(f"\n=== [{p}] {uid} ({fans} 粉) ===")
         if p == "xhs":
             from lib.profiles import scrape_xhs_user_works, resolve_xhs_uid
@@ -109,7 +113,10 @@ def main():
             from lib.collect.douyin_dom import DouyinDomAdapter
             from lib.profiles import fetch_douyin_profile
             ad = DouyinDomAdapter()
-            prof = fetch_douyin_profile(ad, uid)
+            if fans and fans > 0:
+                prof = {"followers": fans, "nickname": nick or uid}
+            else:
+                prof = fetch_douyin_profile(ad, uid)
             if prof and prof.get("followers"):
                 db.upsert_account(p, uid, nickname=prof.get("nickname", uid),
                                   followers=prof["followers"],

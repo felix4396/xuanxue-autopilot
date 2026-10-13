@@ -697,7 +697,7 @@ def download_douyin_video(video_id: str, out_path: str) -> Path:
                 u = resp.get("url", "")
                 hdrs = resp.get("headers", {})
                 cl = int(hdrs.get("content-length") or hdrs.get("Content-Length") or 0)
-                if u and "douyinvod" in u and "media-video" in u and cl > best[1]:
+                if u and ("douyinvod" in u or "bytecdn" in u) and "image" not in u and cl > best[1]:
                     best = (u, cl)
         url = best[0]
     finally:
