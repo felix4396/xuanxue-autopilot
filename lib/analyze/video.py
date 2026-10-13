@@ -54,6 +54,18 @@ class VideoPrep:
         out.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
         return out
 
+    def extract_audio(self, video: Path, platform: str, wid: str) -> Path:
+        """提取音频轨 → audio.m4a（ASR 之外的原始音频存档）。"""
+        d = self.work_dir(platform, wid)
+        out = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(video), "-vn", "-acodec", "aac",
+             "-b:a", "64k", str(d / "audio.m4a")],
+            capture_output=True, text=True, timeout=300,
+        )
+        if out.returncode != 0:
+            raise RuntimeError(f"ffmpeg 提音频失败: {out.stderr[-200:]}")
+        return d / "audio.m4a"
+
     def meta(self, video: Path, platform: str, wid: str) -> Path:
         out = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",

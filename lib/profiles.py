@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import requests
 from typing import Any
 import websocket
 
@@ -185,3 +186,275 @@ def fetch_douyin_profile(adapter, uid_or_name: str) -> dict:
     finally:
         ws.close()
 
+
+
+def resolve_xhs_uid(adapter, red_id_or_name: str) -> dict | None:
+    """小红书号/昵称 → hex uid（搜索页 DOM 用户卡，精确匹配小红书号）。
+
+    返回 {uid, nickname, red_id, followers, works} 或 None。
+    """
+    import re as _re
+    import urllib.parse as _up
+    import time as _t
+    adapter.limiter.wait("xhs")
+    kw = _up.quote(red_id_or_name)
+    ws, tab = adapter._open(
+        f"https://www.xiaohongshu.com/search_result?keyword={kw}&type=54")
+    try:
+        expr = """(() => {
+          const out = [];
+          document.querySelectorAll('a[href*="user/profile/"]').forEach(a => {
+            let el = a, txt = '', depth = 0;
+            while (el && depth < 5) {
+              if ((el.innerText||'').includes('小红书号')) { txt = el.innerText.slice(0, 120); break; }
+              el = el.parentElement; depth++;
+            }
+            if (txt) out.push({
+              uid: (a.getAttribute('href').match(/profile\\/([0-9a-f]{24})/) || [])[1] || '',
+              txt: txt});
+          });
+          return JSON.stringify(out.slice(0, 5));
+        })()"""
+        cards = []
+        for _ in range(12):
+            _t.sleep(3)
+            try:
+                r = adapter._ev(ws, expr)
+                cards = json.loads(r or "[]")
+            except Exception:
+                cards = []
+            if cards:
+                break
+        target = red_id_or_name.replace('*', '').lower()
+        for c in cards:
+            m = _re.search(r"小红书号：([A-Za-z0-9_]+)", c.get("txt", ""))
+            if m and m.group(1).lower() == target.lower():
+                txt = c["txt"]
+                followers = 0
+                fm = _re.search(r"粉丝[・·\s]*([\d.]+[万w]?)", txt)
+                if fm:
+                    s = fm.group(1)
+                    followers = int(float(s[:-1]) * 10000) if s[-1] in "万w" else int(s)
+                wm = _re.search(r"笔记[・·\s]*(\d+)", txt)
+                nickm = _re.search(r"^([^|\n]+)", txt)
+                return {"uid": c["uid"], "nickname": nickm.group(1) if nickm else "",
+                        "red_id": m.group(1), "followers": followers,
+                        "works": int(wm.group(1)) if wm else 0}
+        if cards:
+            c = cards[0]
+            return {"uid": c.get("uid", ""), "nickname": "", "red_id": "",
+                    "followers": 0, "works": 0, "matched": False}
+        return None
+    finally:
+        try:
+            ws.close()
+            requests.get(f"{adapter.cdp}/json/close/{tab['id']}", timeout=5)
+        except Exception:
+            pass
+
+
+def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25) -> dict:
+    """抓 xhs 用户作品：搜索用户 → 该用户的笔记卡（带 xsec_token）→ 详情。"""
+    import time as _t
+    import urllib.parse as _up
+    prof = resolve_xhs_uid(adapter, red_id_or_name)
+    if not prof or not prof.get("uid"):
+        return {"profile": None, "works": []}
+    uid = prof["uid"]
+    adapter.limiter.wait("xhs")
+    kw = _up.quote(red_id_or_name)
+    ws, tab = adapter._open(f"https://www.xiaohongshu.com/search_result?keyword={kw}")
+    try:
+        expr = """(() => {
+          const out = [];
+          document.querySelectorAll('a[href*="/explore/"], a[href*="/search_result/"]').forEach(a => {
+            const href = a.href || '';
+            const m = href.match(/(?:explore|search_result)\\/([0-9a-f]{24})\\?xsec_token=([^&]+)/);
+            if (!m) return;
+            const card = a.closest('section') || a.parentElement;
+            const txt = (card ? card.innerText : '') || '';
+            out.push({wid: m[1], token: m[2], txt: txt.slice(0, 80).replace(/\\n/g, '|')});
+          });
+          return JSON.stringify(out);
+        })()"""
+        cards = []
+        for _ in range(12):
+            _t.sleep(3)
+            try:
+                r = adapter._ev(ws, expr)
+                cards = json.loads(r or "[]")
+            except Exception:
+                cards = []
+            if cards:
+                break
+        nick = prof.get("nickname", "")
+        seen = set()
+        items = []
+        for c in cards:
+            if c["wid"] in seen:
+                continue
+            parts = c.get("txt", "").split("|")
+            author = parts[1] if len(parts) >= 2 else c.get("txt", "")
+            if not nick or (nick[:4] in author) or (nick[:4] in c.get("txt", "")[:40]):
+                seen.add(c["wid"])
+                items.append((c["wid"], c["token"]))
+        from lib.collect.xhs_search import XhsSearchAdapter
+        if isinstance(adapter, XhsSearchAdapter) and items:
+            details = adapter.fetch_note_detail_batch(items[:limit])
+            works = []
+            for (wid, token), (wid2, media, err) in zip(items[:limit], details):
+                works.append({"wid": wid, "xsec_token": token,
+                              "media_path": media, "err": err})
+            return {"profile": prof, "works": works}
+        return {"profile": prof, "works": [{"wid": w, "xsec_token": t} for w, t in items[:limit]]}
+    finally:
+        try:
+            ws.close()
+            import requests as _rq
+            _rq.get(f"{adapter.cdp}/json/close/{tab['id']}", timeout=5)
+        except Exception:
+            pass
+
+            _rq.get(f"{adapter.cdp}/json/close/{tab['id']}", timeout=5)
+        except Exception:
+            pass
+
+
+# ===================== bilibili =====================
+
+_CDP = "http://127.0.0.1:9222"
+
+
+def _cdp_open(url: str, wait: float = 12.0):
+    """开新 tab 并返回 (ws, tab)。"""
+    import requests as _rq
+    import websocket as _w
+    import time as _t
+    before = {t["id"] for t in _rq.get(f"{_CDP}/json/list", timeout=8).json()
+              if isinstance(t, dict)}
+    _rq.put(f"{_CDP}/json/new?{url}", timeout=10)
+    _t.sleep(wait)
+    tabs = [t for t in _rq.get(f"{_CDP}/json/list", timeout=8).json()
+            if isinstance(t, dict) and t.get("type") == "page"
+            and t["id"] not in before]
+    if not tabs:
+        # 兜底：按 URL 前缀找
+        tabs = [t for t in _rq.get(f"{_CDP}/json/list", timeout=8).json()
+                if isinstance(t, dict) and t.get("type") == "page"
+                and url.split("?")[0] in (t.get("url") or "")]
+    tab = tabs[-1]
+    ws = _w.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+    ws.settimeout(60)
+    return ws, tab
+
+
+def _cdp_ev(ws, expr: str):
+    import json as _j
+    ws.send(_j.dumps({"id": 1, "method": "Runtime.evaluate",
+                      "params": {"expression": "JSON.stringify(" + expr + ")",
+                                 "returnByValue": True}}))
+    m = _j.loads(ws.recv())
+    res = m.get("result", {})
+    if "exceptionDetails" in res:
+        raise RuntimeError("eval_exception")
+    val = (res.get("result") or {}).get("value")
+    return _j.loads(val) if isinstance(val, str) else val
+
+
+def _cdp_close(ws, tab):
+    import requests as _rq
+    try:
+        ws.close()
+    except Exception:
+        pass
+    try:
+        _rq.get(f"{_CDP}/json/close/{tab['id']}", timeout=5)
+    except Exception:
+        pass
+
+
+def resolve_bili_mid(name: str) -> dict | None:
+    """B站昵称 → mid（upuser 搜索页 DOM）。"""
+    import urllib.parse as _up
+    kw = _up.quote(name)
+    ws, tab = _cdp_open(f"https://search.bilibili.com/upuser?keyword={kw}")
+    try:
+        expr = """(() => {
+          const out = [];
+          document.querySelectorAll('a[href*="space.bilibili.com/"]').forEach(a => {
+            const m = (a.href||'').match(/space\\.bilibili\\.com\\/(\\d+)/);
+            if (!m) return;
+            const card = a.closest('div[class*="user"], li, .user-item') || a.parentElement;
+            const txt = (card ? card.innerText : a.innerText) || '';
+            if (txt.includes('粉丝') && !out.find(o => o.mid === m[1]))
+              out.push({mid: m[1], txt: txt.slice(0, 120).replace(/\\n/g, '|')});
+          });
+          return out.slice(0, 3);
+        })()"""
+        import time as _t
+        cards = []
+        for _ in range(8):
+            _t.sleep(3)
+            try:
+                cards = _cdp_ev(ws, expr) or []
+            except Exception:
+                cards = []
+            if cards:
+                break
+        if not cards:
+            return None
+        c = cards[0]
+        import re as _re
+        nm = _re.match(r"^([^+|]+)", c["txt"])
+        fm = _re.search(r"([\d.]+万?)粉丝", c["txt"])
+        fans = 0
+        if fm:
+            s = fm.group(1)
+            fans = int(float(s[:-1]) * 10000) if s.endswith("万") else int(s)
+        vm = _re.search(r"(\d+)个视频", c["txt"])
+        return {"mid": c["mid"], "nickname": nm.group(1).strip() if nm else "",
+                "followers": fans, "videos": int(vm.group(1)) if vm else 0}
+    finally:
+        _cdp_close(ws, tab)
+
+
+def scrape_bili_user_works(mid: str, limit: int = 25) -> list[dict]:
+    """B站用户视频列表（space DOM 小卡片）。返回 [{bv, title, date, plays}]。"""
+    ws, tab = _cdp_open(f"https://space.bilibili.com/{mid}/video")
+    try:
+        expr = """(() => {
+          const out = [];
+          document.querySelectorAll('a[href*="/video/BV"]').forEach(a => {
+            const bv = ((a.getAttribute('href')||'').match(/video\\/(BV[0-9A-Za-z]+)/) || [])[1] || '';
+            if (!bv || out.find(o => o.bv === bv)) return;
+            const card = a.closest('.small-item, .video-card, li') || a.parentElement;
+            const txt = (card ? card.innerText : a.innerText) || '';
+            out.push({bv, txt: txt.slice(0, 100).replace(/\\n/g, '|')});
+          });
+          return out.slice(0, """ + str(limit) + """);
+        })()"""
+        import time as _t
+        cards = []
+        for _ in range(8):
+            _t.sleep(3)
+            try:
+                cards = _cdp_ev(ws, expr) or []
+            except Exception:
+                cards = []
+            if cards:
+                break
+        import re as _re
+        works = []
+        for c in cards:
+            # txt: 播放量|时长|标题(可含|)|日期
+            parts = c["txt"].split("|")
+            plays = parts[0] if parts else ""
+            date = parts[-1] if len(parts) >= 2 and _re.match(r"^\d{1,2}月\d{1,2}日$|^\d{4}-\d{2}", parts[-1]) else ""
+            dur = parts[1] if len(parts) >= 2 and _re.match(r"^\d{1,2}:\d{2}", parts[1]) else ""
+            title_end = len(parts) - 1 if date else len(parts)
+            title = "|".join(parts[2:title_end]) if dur else "|".join(parts[1:title_end])
+            works.append({"bv": c["bv"], "title": title, "date": date,
+                          "plays": plays, "duration": dur})
+        return works
+    finally:
+        _cdp_close(ws, tab)

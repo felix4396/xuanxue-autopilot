@@ -100,7 +100,15 @@ class XhsSearchAdapter(BaseAdapter):
         while time.time() - t0 < timeout:
             m = json.loads(ws.recv())
             if m.get("id") == 1:
-                val = m["result"]["result"]["value"]
+                res = m.get("result", {})
+                if "exceptionDetails" in res:
+                    raise RuntimeError("eval_exception: " +
+                                       json.dumps(res["exceptionDetails"])[:100])
+                obj = (res.get("result") or {})
+                if "value" not in obj:
+                    # context 失效/undefined —— 抛给上层重连
+                    raise RuntimeError("no_value")
+                val = obj["value"]
                 return json.loads(val) if isinstance(val, str) else val
         raise TimeoutError("CDP evaluate 超时")
 
@@ -166,6 +174,7 @@ class XhsSearchAdapter(BaseAdapter):
             return False
 
     def _open(self, url: str, wait: float = 9.0) -> tuple[websocket.WebSocket, dict]:
+        # 永远开新 tab（调用方 finally 负责关）——避免复用 tab 的 stale 导航竞态
         before = {t["id"] for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                   if isinstance(t, dict)}
         requests.put(f"{self.cdp}/json/new?{url}", timeout=8)
@@ -339,10 +348,25 @@ class XhsSearchAdapter(BaseAdapter):
                             continue
                         ws = websocket.create_connection(tab2["webSocketDebuggerUrl"], timeout=30)
                         ws.settimeout(40)
+                        # 探活轮询：等 context 就绪（eval "1" 连续成功才继续）
+                        ready = False
+                        for _ in range(8):
+                            time.sleep(2)
+                            try:
+                                if self._ev(ws, "1") == 1:
+                                    ready = True
+                                    break
+                            except Exception:
+                                continue
+                        if not ready:
+                            results.append((note_id, None, "context_dead"))
+                            ws = None
+                            continue
                     r = {}
-                    for _ in range(5):
-                        time.sleep(3)
-                        r = self._ev(ws, """(() => {
+                    for attempt2 in range(5):
+                        try:
+                            time.sleep(3)
+                            r = self._ev(ws, """(() => {
                           const nm = (window.__INITIAL_STATE__ && window.__INITIAL_STATE__.note
                             && window.__INITIAL_STATE__.note.noteDetailMap) || {};
                           for (const [nid, nd] of Object.entries(nm)) {
@@ -359,6 +383,23 @@ class XhsSearchAdapter(BaseAdapter):
                           }
                           return null;
                         })()""")
+                        except Exception:
+                            # context 死亡 → 重建连接再试（重连探活同款）
+                            try:
+                                if ws is not None:
+                                    ws.close()
+                            except Exception:
+                                pass
+                            tab2 = next((t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                                         if isinstance(t, dict) and "xiaohongshu.com" in (t.get("url") or "")), None)
+                            if tab2 is None:
+                                continue
+                            try:
+                                ws = websocket.create_connection(tab2["webSocketDebuggerUrl"], timeout=30)
+                                ws.settimeout(40)
+                            except Exception:
+                                continue
+                            continue
                         if r:
                             break
                     if not r:
