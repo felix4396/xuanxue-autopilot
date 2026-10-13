@@ -508,3 +508,229 @@ def download_bili_video(bvid: str, out_path: str) -> Path:
         tmp.rename(out)
         return out
     raise RuntimeError(f"分段下载不完整 {tmp.stat().st_size}/{total}")
+
+
+def resolve_douyin_sec_uid(name: str) -> dict | None:
+    """douyin 昵称 → sec_uid（搜索页切"用户"tab，点用户卡拿 href）。"""
+    import requests as _rq
+    import websocket as _w
+    import time as _t
+    tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=5).json()
+            if isinstance(t, dict) and t.get("type") == "page"
+            and "douyin.com" in (t.get("url") or "")]
+    if not tabs:
+        _rq.put("http://127.0.0.1:9222/json/new?https://www.douyin.com/jingxuan", timeout=10)
+        _t.sleep(10)
+        tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=5).json()
+                if isinstance(t, dict) and t.get("type") == "page"
+                and "douyin.com" in (t.get("url") or "")]
+    tabs.sort(key=lambda t: 0 if "/search/" not in (t.get("url") or "") else 1)
+    tab = tabs[0]
+    ws = _w.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+    ws.settimeout(60)
+    try:
+        _t.sleep(3)
+        ws.send(json.dumps({"id": 7, "method": "Runtime.evaluate", "params": {
+            "expression": """(() => {
+              const inp = document.querySelector('input[data-e2e="searchbar-input"], input[type="search"], .search-input input');
+              if (!inp) return 'NO-INPUT';
+              inp.focus();
+              document.execCommand('selectAll', false, null);
+              document.execCommand('insertText', false, '""" + json.dumps(name)[1:-1] + """');
+              inp.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));
+              return 'DONE';
+            })()""",
+            "returnByValue": True}}))
+        v = json.loads(ws.recv()).get("result", {}).get("result", {}).get("value")
+        if v != "DONE":
+            return None
+        _t.sleep(10)
+        # 切"用户"tab
+        ws.send(json.dumps({"id": 9, "method": "Runtime.evaluate", "params": {
+            "expression": """(() => {
+              const cands = [...document.querySelectorAll('a, span, div')].filter(e =>
+                (e.innerText || '').trim() === '用户' && e.children.length === 0);
+              if (!cands.length) return 'NO-TAB';
+              cands[0].click();
+              return 'OK';
+            })()""",
+            "returnByValue": True}}))
+        v2 = json.loads(ws.recv()).get("result", {}).get("result", {}).get("value")
+        if v2 != "OK":
+            return None
+        _t.sleep(8)
+        # 拿用户卡 href + 文本
+        ws.send(json.dumps({"id": 11, "method": "Runtime.evaluate", "params": {
+            "expression": """(() => {
+              const cards = [...document.querySelectorAll('a')].filter(a =>
+                (a.innerText || '').includes('粉丝') && (a.innerText || '').includes('获赞'));
+              if (!cards.length) return '';
+              return JSON.stringify({href: cards[0].getAttribute('href') || '',
+                                     txt: (cards[0].innerText || '').slice(0, 100)});
+            })()""",
+            "returnByValue": True}}))
+        val = json.loads(ws.recv()).get("result", {}).get("result", {}).get("value")
+        if not val:
+            return None
+        d = json.loads(val)
+        import re as _re
+        m = _re.search(r"/user/(MS4w[\w-]+)", d["href"])
+        if not m:
+            return None
+        txt = d["txt"].replace("\n", "|")
+        fans = _re.search(r"([\d.]+[万亿]?)粉丝", txt)
+        likes = _re.search(r"([\d.]+[万亿]?)获赞", txt)
+        return {"sec_uid": m.group(1),
+                "nickname": name, "followers": _num(fans.group(1)) if fans else 0,
+                "likes": _num(likes.group(1)) if likes else 0}
+    finally:
+        ws.close()
+
+
+def scrape_douyin_user_works(sec_uid: str, limit: int = 25) -> list[dict]:
+    """douyin user 页作品卡（滚动加载）。返回 [{id, title, plays}]。"""
+    import requests as _rq
+    import websocket as _w
+    import time as _t
+    url = f"https://www.douyin.com/user/{sec_uid}"
+    _rq.put(f"http://127.0.0.1:9222/json/new?{url}", timeout=10)
+    _t.sleep(15)
+    tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=8).json()
+            if isinstance(t, dict) and t.get("type") == "page"
+            and f"/user/{sec_uid[:20]}" in (t.get("url") or "")]
+    if not tabs:
+        return []
+    tab = tabs[-1]
+    ws = _w.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+    ws.settimeout(60)
+    try:
+        expr = """(() => {
+          const out = [];
+          document.querySelectorAll('a[href*="/video/"]').forEach(a => {
+            const m = (a.getAttribute('href')||'').match(/video\\/(\\d+)/);
+            if (m && !out.find(o => o.id === m[1])) {
+              const card = a.closest('li') || a.parentElement;
+              out.push({id: m[1], txt: ((card ? card.innerText : '') || '').slice(0, 90)});
+            }
+          });
+          return JSON.stringify(out.slice(0, 60));
+        })()"""
+        cards = []
+        for _ in range(16):
+            _t.sleep(3)
+            try:
+                ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {
+                    "expression": expr, "returnByValue": True}}))
+                while True:
+                    m = json.loads(ws.recv())
+                    if m.get("id") == 1:
+                        break
+                val = m.get("result", {}).get("result", {}).get("value")
+                if isinstance(val, str) and val.startswith("["):
+                    cards = json.loads(val)
+            except Exception:
+                cards = cards
+            if cards and len(cards) >= limit:
+                break
+            if cards:
+                try:
+                    ws.send(json.dumps({"id": 2, "method": "Runtime.evaluate", "params": {
+                        "expression": "window.scrollBy(0, 3000); 1", "returnByValue": True}}))
+                    while True:
+                        m2 = json.loads(ws.recv())
+                        if m2.get("id") == 2:
+                            break
+                except Exception:
+                    pass
+        import re as _re
+        works = []
+        for c in cards[:limit]:
+            txt = c["txt"].replace("\n", "|")
+            plays = ""
+            pm = _re.search(r"\|([\d.]+万?)\|", txt)
+            if pm:
+                plays = pm.group(1)
+            title = "|".join(txt.split("|")[2:4])[:60]
+            works.append({"id": c["id"], "title": title, "plays": plays})
+        return works
+    finally:
+        try:
+            ws.close()
+            _rq.get(f"http://127.0.0.1:9222/json/close/{tab['id']}", timeout=5)
+        except Exception:
+            pass
+
+
+def download_douyin_video(video_id: str, out_path: str) -> Path:
+    """douyin 视频下载：Chrome 开视频页，Network 监听抓 douyinvod 流直链（带签名+Referer 可直下）。"""
+    import requests as _rq
+    import websocket as _w
+    import time as _t
+    from pathlib import Path as _P
+    out = _P(out_path)
+    if out.exists() and out.stat().st_size > 10000:
+        return out
+    _rq.put(f"http://127.0.0.1:9222/json/new?https://www.douyin.com/video/{video_id}", timeout=10)
+    _t.sleep(15)
+    tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=8).json()
+            if isinstance(t, dict) and t.get("type") == "page"
+            and f"/video/{video_id}" in (t.get("url") or "")]
+    if not tabs:
+        raise RuntimeError("douyin 视频页未打开")
+    tab = tabs[-1]
+    ws = _w.create_connection(tab["webSocketDebuggerUrl"], timeout=90)
+    ws.settimeout(60)
+    url = ""
+    try:
+        ws.send(json.dumps({"id": 0, "method": "Network.enable"}))
+        ws.recv()
+        ws.send(json.dumps({"id": 1, "method": "Page.reload"}))
+        ws.recv()
+        best, t0 = (None, 0), _t.time()
+        while _t.time() - t0 < 45:
+            try:
+                m = json.loads(ws.recv())
+            except Exception:
+                break
+            if m.get("method") == "Network.responseReceived":
+                resp = m["params"].get("response", {})
+                u = resp.get("url", "")
+                hdrs = resp.get("headers", {})
+                cl = int(hdrs.get("content-length") or hdrs.get("Content-Length") or 0)
+                if u and "douyinvod" in u and "media-video" in u and cl > best[1]:
+                    best = (u, cl)
+        url = best[0]
+    finally:
+        try:
+            ws.close()
+            _rq.get(f"http://127.0.0.1:9222/json/close/{tab['id']}", timeout=5)
+        except Exception:
+            pass
+    if not url:
+        raise RuntimeError("未捕获 douyinvod 流")
+    # Range 探真实总长（分段响应的 content-length 不可靠）
+    s = _rq.Session()
+    s.headers.update({"Referer": "https://www.douyin.com/", "User-Agent": "Mozilla/5.0"})
+    rh = s.get(url, headers={"Range": "bytes=0-1"}, timeout=30)
+    cr = rh.headers.get("Content-Range", "")
+    total = int(cr.split("/")[-1]) if "/" in cr else int(rh.headers.get("Content-Length", 0))
+    tmp = out.with_suffix(".part")
+    pos = tmp.stat().st_size if tmp.exists() else 0
+    import time as _t2
+    for _ in range(60):
+        if pos >= total:
+            break
+        end = min(pos + 8 * 1024 * 1024 - 1, total - 1)
+        try:
+            rr = s.get(url, headers={"Range": f"bytes={pos}-{end}"}, timeout=120)
+            if rr.status_code in (200, 206):
+                with open(tmp, "ab") as f:
+                    f.write(rr.content)
+                pos = tmp.stat().st_size
+        except Exception:
+            _t2.sleep(3)
+            continue
+    if tmp.exists() and tmp.stat().st_size >= total:
+        tmp.rename(out)
+        return out
+    raise RuntimeError(f"douyin 下载不完整 {tmp.stat().st_size if tmp.exists() else 0}/{total}")

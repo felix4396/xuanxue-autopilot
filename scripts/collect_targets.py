@@ -49,6 +49,10 @@ def main():
             time.sleep(75)
         prev_platform = p
         extra = json.loads(extra_s or "{}")
+        # douyin profile 已成功的跳过（每轮重抓浪费 4 分钟/账号）
+        if p == "douyin" and fans and fans > 0:
+            print(f"=== [{p}] {uid} 已有 profile ({fans} 粉)，跳过 ===")
+            continue
         print(f"\n=== [{p}] {uid} ({fans} 粉) ===")
         if p == "xhs":
             from lib.profiles import scrape_xhs_user_works, resolve_xhs_uid
@@ -114,6 +118,39 @@ def main():
                 print(f"  profile ✅ 粉丝 {prof['followers']}")
             else:
                 print(f"  profile 失败: {prof}")
+            # 作品采集：sec_uid → user 页作品卡 → 逐条下载
+            from lib.profiles import resolve_douyin_sec_uid, scrape_douyin_user_works, download_douyin_video
+            have = db.conn.execute(
+                "SELECT count(*) FROM works WHERE platform='douyin' AND uid=? AND media_path!=''",
+                (uid,)).fetchone()[0]
+            if have >= 10:
+                print(f"  已有 {have} media，跳过作品采集")
+            else:
+                sec = resolve_douyin_sec_uid(nick or uid)
+                if not sec:
+                    print("  sec_uid 解析失败")
+                else:
+                    print(f"  sec_uid ✅ {sec['sec_uid'][:30]}…")
+                    dws = scrape_douyin_user_works(sec["sec_uid"], limit=12)
+                    print(f"  {len(dws)} 条作品卡")
+                    okn = 0
+                    for w in dws:
+                        outp = f"output/media/douyin-{w['id']}.mp4"
+                        try:
+                            db.upsert_work("douyin", w["id"], uid=uid,
+                                           extra=json.dumps({"title": w.get("title", ""),
+                                                             "plays": w.get("plays", "")},
+                                                            ensure_ascii=False))
+                            download_douyin_video(w["id"], outp)
+                            db.upsert_work("douyin", w["id"], uid=uid, media_path=outp,
+                                           extra=json.dumps({"title": w.get("title", ""),
+                                                             "plays": w.get("plays", "")},
+                                                            ensure_ascii=False))
+                            okn += 1
+                            print(f"    {w['id']} ✅ {okn}")
+                        except Exception as e3:
+                            print(f"    {w['id']} ❌ {str(e3)[:40]}")
+                    print(f"  下载 {okn}/{len(dws)}")
         elif p == "bilibili":
             from lib.profiles import resolve_bili_mid, scrape_bili_user_works
             prof = resolve_bili_mid(nick or uid)
