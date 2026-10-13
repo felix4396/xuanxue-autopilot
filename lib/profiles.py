@@ -278,7 +278,8 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25) -> dict
           return JSON.stringify(out);
         })()"""
         cards = []
-        for _ in range(12):
+        target_n = limit
+        for _ in range(14):
             _t.sleep(3)
             try:
                 r = adapter._ev(ws, expr)
@@ -286,7 +287,13 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25) -> dict
             except Exception:
                 cards = []
             if cards:
-                break
+                if len(cards) >= target_n:
+                    break
+                # 未抓满：滚动加载更多（SPA 懒加载）
+                try:
+                    adapter._ev(ws, "window.scrollBy(0, 2500); 1")
+                except Exception:
+                    pass
         nick = prof.get("nickname", "")
         seen = set()
         items = []
