@@ -30,6 +30,10 @@ from .ratelimit import RateLimiter
 CDP = "http://127.0.0.1:9222"
 
 
+class XhsAccountBlocked(RuntimeError):
+    """xhs 账号级风控（300011）——调用方应触发全平台冷却。"""
+
+
 class XhsSearchAdapter(BaseAdapter):
     platform = "xhs"
 
@@ -461,9 +465,6 @@ class XhsSearchAdapter(BaseAdapter):
                     pass
         return results
 
-
-class XhsAccountBlocked(RuntimeError):
-    """xhs 账号级风控（300011）——调用方应触发全平台冷却。"""
 
     def fetch_note_detail(self, note_id: str, xsec_token: str = "") -> dict:
         """带 xsec_token 直开 explore 页 → 从 __INITIAL_STATE__.note 解析详情+媒体直链。
