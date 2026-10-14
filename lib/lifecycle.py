@@ -54,10 +54,15 @@ def archive_video(platform: str, wid: str, media_path: str, dry: bool = False) -
     return str(dest)
 
 
-def sweep(dry: bool = False, days: int | None = None) -> dict:
-    """全量扫描：素材包齐备的作品 → 原视频归档；days 给定时再清理过期归档。"""
+def sweep(dry: bool = False, days: int | None = None, mode: str = "delete") -> dict:
+    """全量扫描：素材包齐备的作品 → 处置原视频。
+
+    mode: "delete" 删除原片（默认，元数据保留 source_url 可回溯）
+          "archive" 移入 output/archive/ 冷备
+    days: 仅对 archive 模式生效——清理 N 天前的归档
+    """
     con = sqlite3.connect(ROOT / "data" / "bench.db")
-    stats = {"archived": 0, "kept_incomplete": 0, "no_video": 0, "purged": 0}
+    stats = {"deleted": 0, "archived": 0, "kept_incomplete": 0, "no_video": 0}
     for platform, wid, mpath in con.execute(
             "SELECT platform, wid, media_path FROM works WHERE media_path LIKE '%.mp4'").fetchall():
         src = Path(mpath)
@@ -66,23 +71,34 @@ def sweep(dry: bool = False, days: int | None = None) -> dict:
         if not src.exists():
             stats["no_video"] += 1
             continue
-        dest = archive_video(platform, wid, mpath, dry=dry)
-        if dest:
-            if not dry:
+        if not pack_complete(pack_dir(platform, wid)):
+            stats["kept_incomplete"] += 1
+            continue
+        if dry:
+            stats[mode + "d" if mode == "archive" else "deleted"] += 1
+            continue
+        if mode == "archive":
+            dest = archive_video(platform, wid, mpath)
+            if dest:
                 con.execute("UPDATE works SET media_path=? WHERE platform=? AND wid=?",
                             (dest, platform, wid))
-            stats["archived"] += 1
+                stats["archived"] += 1
         else:
-            stats["kept_incomplete"] += 1
+            src.unlink(missing_ok=True)
+            # 元数据留链接，media_path 清空（素材包仍在）
+            con.execute("UPDATE works SET media_path='' WHERE platform=? AND wid=?",
+                        (platform, wid))
+            stats["deleted"] += 1
     con.commit()
-    # 过期归档清理
-    if days is not None:
+    # 清理空壳 mp4 引用 + 过期归档
+    if days is not None and ARCHIVE.exists():
         cutoff = time.time() - days * 86400
         for f in ARCHIVE.rglob("*.mp4"):
             if f.stat().st_mtime < cutoff:
                 if not dry:
                     f.unlink()
-                stats["purged"] += 1
+        if not dry and not any(ARCHIVE.iterdir()):
+            ARCHIVE.rmdir()
     return stats
 
 
@@ -101,7 +117,9 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="数据生命周期管理")
     ap.add_argument("--sweep", action="store_true", help="扫描并归档已加工完的原视频")
-    ap.add_argument("--purge-days", type=int, default=None, help="清理 N 天前的归档视频")
+    ap.add_argument("--purge-days", type=int, default=None, help="archive 模式下清理 N 天前的归档")
+    ap.add_argument("--mode", choices=["delete", "archive"], default="delete",
+                    help="delete=删原片留链接（默认）；archive=冷备到 output/archive/")
     ap.add_argument("--dry", action="store_true")
     ap.add_argument("--usage", action="store_true", help="报告分层磁盘占用")
     a = ap.parse_args()
@@ -110,5 +128,5 @@ if __name__ == "__main__":
         for k, v in u.items():
             print(f"  {k}: {v / 1e9:.1f} GB")
     if a.sweep or a.purge_days is not None:
-        s = sweep(dry=a.dry, days=a.purge_days)
+        s = sweep(dry=a.dry, days=a.purge_days, mode=a.mode)
         print(json.dumps(s, ensure_ascii=False))

@@ -150,7 +150,7 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
     meta = {
         "wid": wid,
         "platform": platform,
-        "source_url": extra.get("media_url") or mc.get("video_url") or "",
+        "source_url": work.get("source_url") or extra.get("media_url") or mc.get("video_url") or "",
         "user": {
             "uid": work.get("uid") or "",
             "nickname": mc.get("nickname") or extra.get("nickname") or extra.get("user") or "",

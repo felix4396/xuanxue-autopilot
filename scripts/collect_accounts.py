@@ -120,14 +120,14 @@ def main():
                       + (f" / +{r['comments_new']} 评论" if r.get("comments_new") else "")
                       + f"（{dur:.0f}s）")
 
-    # 生命周期：把已加工完（frames+asr 齐）的原视频归档到 output/archive/
+    # 生命周期：素材齐备（frames+asr）的作品删除原片，元数据留 source_url 可回溯
     if not args.no_sweep:
         import sys as _sys
         _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from lib.lifecycle import sweep
-        s = sweep()
-        if s["archived"]:
-            print(f"\n📦 归档原视频 {s['archived']} 个（素材齐备，原片移入 output/archive/）")
+        s = sweep(mode="delete")
+        if s["deleted"]:
+            print(f"\n🗑️ 清理原视频 {s['deleted']} 个（素材齐备，链接已存 source_url）")
 
 
 if __name__ == "__main__":

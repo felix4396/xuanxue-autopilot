@@ -4,9 +4,12 @@
 
 ```
 output/media/    工作区    素材包（frames/*.jpg + audio.m4a + asr.json + meta.json）
-output/archive/  冷备      原始 mp4（素材齐备后移入，默认永久保留）
 output/corpus/   最终交付  轻量资产：封面/首中尾帧 + asr.json + content.md + comments.json + meta.json
 ```
+
+**不保留原视频**。素材齐备（frames + asr）后原片直接删除；回溯靠 `works.source_url`
+（db 列 + 语料库 meta.json 均有），xhs 链接带 xsec_token 可直接打开。
+可选 `--mode archive` 冷备到 output/archive/（默认关闭）。
 
 ## 原则
 
