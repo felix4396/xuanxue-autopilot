@@ -33,7 +33,7 @@ def main():
     # 只跑 works 数不足的账号（断点续跑）；xhs 账号间强制 60s 间隔（IP 频控恢复）
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--min-works", type=int, default=5)
+    ap.add_argument("--min-works", type=int, default=10)
     a = ap.parse_args()
     print(f"目标账号 {len(accounts)} 个")
     prev_platform = None
@@ -81,8 +81,11 @@ def main():
                               extra=json.dumps({**extra, "hex_uid": hex_uid,
                                                 "resolved_nick": nickname},
                                                ensure_ascii=False))
-            # 作品卡（走用户 tab 搜索 + 笔记卡收集）
-            r = scrape_xhs_user_works(ad, uid, limit=25)
+            # 作品卡（走用户 tab 搜索 + 笔记卡收集；跳过 db 已有 media 的 wid）
+            have_media = {row[0] for row in db.conn.execute(
+                "SELECT wid FROM works WHERE platform='xhs' AND uid=? AND media_path!=''",
+                (uid,)).fetchall()}
+            r = scrape_xhs_user_works(ad, uid, limit=25, skip_wids=have_media)
             if not isinstance(r, dict):
                 print("  works 抓取失败，跳过")
                 continue
@@ -127,13 +130,19 @@ def main():
                 print(f"  profile 失败: {prof}")
             # 作品采集：sec_uid → user 页作品卡 → 逐条下载
             from lib.profiles import resolve_douyin_sec_uid, scrape_douyin_user_works, download_douyin_video
+            # sec_uid 优先用缓存（extra.sec_uid），避免每轮重复搜索 resolve
+            _cached_sec = (extra.get("sec_uid") or "").strip()
             have = db.conn.execute(
                 "SELECT count(*) FROM works WHERE platform='douyin' AND uid=? AND media_path!=''",
                 (uid,)).fetchone()[0]
             if have >= 10:
                 print(f"  已有 {have} media，跳过作品采集")
             else:
-                sec = resolve_douyin_sec_uid(nick or uid)
+                sec = {"sec_uid": _cached_sec} if _cached_sec else resolve_douyin_sec_uid(nick or uid)
+                if sec and sec.get("sec_uid") and not _cached_sec:
+                    db.upsert_account(p, uid, nickname=nick or uid, followers=fans or 0,
+                                      extra=json.dumps({**extra, "sec_uid": sec["sec_uid"]},
+                                                       ensure_ascii=False))
                 if not sec:
                     print("  sec_uid 解析失败")
                 else:
@@ -141,8 +150,15 @@ def main():
                     dws = scrape_douyin_user_works(sec["sec_uid"], limit=12)
                     print(f"  {len(dws)} 条作品卡")
                     okn = 0
+                    dy_have = {row[0] for row in db.conn.execute(
+                        "SELECT wid FROM works WHERE platform='douyin' AND uid=? AND media_path!=''",
+                        (uid,)).fetchall()}
+                    import pathlib as _pl2
                     for w in dws:
                         outp = f"output/media/douyin-{w['id']}.mp4"
+                        if w["id"] in dy_have and _pl2.Path(outp).exists():
+                            okn += 1
+                            continue
                         try:
                             db.upsert_work("douyin", w["id"], uid=uid,
                                            extra=json.dumps({"title": w.get("title", ""),

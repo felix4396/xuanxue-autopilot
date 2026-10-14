@@ -304,6 +304,8 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25) -> dict
             author = parts[1] if len(parts) >= 2 else c.get("txt", "")
             if not nick or (nick[:4] in author) or (nick[:4] in c.get("txt", "")[:40]):
                 seen.add(c["wid"])
+                if skip_wids and c["wid"] in skip_wids:
+                    continue
                 items.append((c["wid"], c["token"]))
         from lib.collect.xhs_search import XhsSearchAdapter
         if isinstance(adapter, XhsSearchAdapter) and items:
@@ -670,23 +672,42 @@ def download_douyin_video(video_id: str, out_path: str) -> Path:
     out = _P(out_path)
     if out.exists() and out.stat().st_size > 10000:
         return out
-    _rq.put(f"http://127.0.0.1:9222/json/new?https://www.douyin.com/video/{video_id}", timeout=10)
-    _t.sleep(15)
-    tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=8).json()
-            if isinstance(t, dict) and t.get("type") == "page"
-            and f"/video/{video_id}" in (t.get("url") or "")]
-    if not tabs:
-        raise RuntimeError("douyin 视频页未打开")
-    tab = tabs[-1]
+    # 复用全局 tab（同一轮内多条视频共用一个页面，避免反复开关 tab）
+    global _DY_TAB
+    tab = None
+    if "_DY_TAB" in globals() and _DY_TAB:
+        tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=8).json()
+                if isinstance(t, dict) and t.get("type") == "page"
+                and t.get("id") == _DY_TAB]
+        if tabs:
+            tab = tabs[0]
+    if tab is None:
+        _rq.put(f"http://127.0.0.1:9222/json/new?https://www.douyin.com/video/{video_id}", timeout=10)
+        _t.sleep(15)
+        tabs = [t for t in _rq.get("http://127.0.0.1:9222/json/list", timeout=8).json()
+                if isinstance(t, dict) and t.get("type") == "page"
+                and f"/video/{video_id}" in (t.get("url") or "")]
+        if not tabs:
+            raise RuntimeError("douyin 视频页未打开")
+        tab = tabs[-1]
+        _DY_TAB = tab["id"]
     ws = _w.create_connection(tab["webSocketDebuggerUrl"], timeout=90)
     ws.settimeout(60)
     url = ""
     try:
         ws.send(json.dumps({"id": 0, "method": "Network.enable"}))
         ws.recv()
-        ws.send(json.dumps({"id": 1, "method": "Page.reload"}))
-        ws.recv()
-        best, t0 = (None, 0), _t.time()
+        # SPA 导航（复用 tab）或首次 reload
+        if f"/video/{video_id}" not in (tab.get("url") or ""):
+            ws.send(json.dumps({"id": 9, "method": "Runtime.evaluate", "params": {
+                "expression": f"location.href='https://www.douyin.com/video/{video_id}'; 1",
+                "returnByValue": True}}))
+            ws.recv()
+            _t.sleep(12)
+        else:
+            ws.send(json.dumps({"id": 1, "method": "Page.reload"}))
+            ws.recv()
+        vbest, abest, t0 = (None, 0), (None, 0), _t.time()
         while _t.time() - t0 < 45:
             try:
                 m = json.loads(ws.recv())
@@ -695,17 +716,26 @@ def download_douyin_video(video_id: str, out_path: str) -> Path:
             if m.get("method") == "Network.responseReceived":
                 resp = m["params"].get("response", {})
                 u = resp.get("url", "")
+                mt = resp.get("mimeType", "")
                 hdrs = resp.get("headers", {})
                 cl = int(hdrs.get("content-length") or hdrs.get("Content-Length") or 0)
-                if u and ("douyinvod" in u or "bytecdn" in u) and "image" not in u and cl > best[1]:
-                    best = (u, cl)
-        url = best[0]
+                if not u or "image" in u or ("douyinvod" not in u and "bytecdn" not in u):
+                    continue
+                is_audio = ("media-audio" in u or mt.startswith("audio") or "audio" in mt)
+                if is_audio:
+                    if cl > abest[1]:
+                        abest = (u, cl)
+                else:
+                    if cl > vbest[1]:
+                        vbest = (u, cl)
+        url = vbest[0]
+        aurl = abest[0]
     finally:
         try:
             ws.close()
-            _rq.get(f"http://127.0.0.1:9222/json/close/{tab['id']}", timeout=5)
         except Exception:
             pass
+        # 复用模式不关 tab（下条视频 SPA 导航复用）
     if not url:
         raise RuntimeError("未捕获 douyinvod 流")
     # Range 探真实总长（分段响应的 content-length 不可靠）
@@ -730,7 +760,40 @@ def download_douyin_video(video_id: str, out_path: str) -> Path:
         except Exception:
             _t2.sleep(3)
             continue
-    if tmp.exists() and tmp.stat().st_size >= total:
-        tmp.rename(out)
-        return out
-    raise RuntimeError(f"douyin 下载不完整 {tmp.stat().st_size if tmp.exists() else 0}/{total}")
+    if not (tmp.exists() and tmp.stat().st_size >= total):
+        raise RuntimeError(f"douyin 下载不完整 {tmp.stat().st_size if tmp.exists() else 0}/{total}")
+    tmp.rename(out)
+    # 有独立音频流 → 下载音频 + ffmpeg mux 成含音轨 mp4
+    if aurl:
+        atmp = out.with_suffix(".apart")
+        rh2 = s.get(aurl, headers={"Range": "bytes=0-1"}, timeout=30)
+        cr2 = rh2.headers.get("Content-Range", "")
+        atotal = int(cr2.split("/")[-1]) if "/" in cr2 else int(rh2.headers.get("Content-Length", 0))
+        apos = atmp.stat().st_size if atmp.exists() else 0
+        for _ in range(40):
+            if apos >= atotal:
+                break
+            aend = min(apos + 4 * 1024 * 1024 - 1, atotal - 1)
+            try:
+                rr2 = s.get(aurl, headers={"Range": f"bytes={apos}-{aend}"}, timeout=120)
+                if rr2.status_code in (200, 206):
+                    with open(atmp, "ab") as f:
+                        f.write(rr2.content)
+                    apos = atmp.stat().st_size
+            except Exception:
+                _t2.sleep(3)
+                continue
+        if atmp.exists() and atmp.stat().st_size >= atotal:
+            import subprocess as _sp
+            muxed = out.with_suffix(".mux.mp4")
+            _FFMPEG = "/opt/homebrew/bin/ffmpeg"
+            r3 = _sp.run([_FFMPEG, "-y", "-i", str(out), "-i", str(atmp),
+                          "-c", "copy", str(muxed)],
+                         capture_output=True, timeout=300)
+            atmp.unlink(missing_ok=True)
+            if r3.returncode == 0 and muxed.exists():
+                out.unlink()
+                muxed.rename(out)
+        else:
+            atmp.unlink(missing_ok=True)
+    return out
