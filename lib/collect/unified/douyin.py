@@ -122,7 +122,78 @@ class DouyinCollector(UnifiedAccountCollector):
         return None
 
     def _fetch_work(self, w: Work) -> dict:
+        """SPA 打开详情页，从 DOM 取标题/正文/互动数（配合 _download 复用同一 tab）。"""
+        import time as _t
+        try:
+            self._ensure_tab(f"https://www.douyin.com/video/{w.wid}")
+        except Exception:
+            return {"content_type": "video"}
+        try:
+            ws = websocket.create_connection(self._TAB["webSocketDebuggerUrl"], timeout=30)
+            ws.settimeout(15)
+            js = """(() => {
+              const t = document.querySelector('h1')?.innerText
+                     || document.querySelector('[data-e2e="video-desc"]')?.innerText || '';
+              const g = s => document.querySelector(s)?.innerText || '';
+              const num = sel => {
+                const el = document.querySelector(sel); if (!el) return '';
+                const m = el.innerText.match(/[\d.]+[万wW]?/); return m ? m[0] : '';
+              };
+              return JSON.stringify({
+                title: t.slice(0, 200),
+                desc: t.slice(0, 500),
+                likes: num('[data-e2e="video-player-digg"]') || g('[class*="digg"] [class*="count"]'),
+                comments: num('[data-e2e="video-player-comment"]') || g('[class*="comment"] [class*="count"]'),
+              });
+            })()"""
+            ws.send(json.dumps({"id": 21, "method": "Runtime.evaluate",
+                                "params": {"expression": js, "returnByValue": True}}))
+            for _ in range(10):
+                m = json.loads(ws.recv())
+                if m.get("id") == 21:
+                    val = json.loads(m["result"]["result"].get("value", "{}"))
+                    if val.get("title") or val.get("desc"):
+                        return {"content_type": "video", "title": val["title"],
+                                "desc": val["desc"],
+                                "likes": self._parse_count(val.get("likes")),
+                                "comments": self._parse_count(val.get("comments"))}
+                    break
+            ws.close()
+        except Exception:
+            pass
         return {"content_type": "video"}
+
+    @staticmethod
+    def _parse_count(s: str) -> int:
+        s = (s or "0").strip().replace(",", "")
+        try:
+            if s.endswith(("万", "w", "W")):
+                return int(float(s[:-1]) * 10000)
+            return int(float(s))
+        except ValueError:
+            return 0
+
+    def _ensure_tab(self, url: str):
+        """确保有 douyin tab 并导航到 url（不存在则开新 tab）。"""
+        import time as _t
+        if self._TAB is not None:
+            try:
+                ws = websocket.create_connection(self._TAB["webSocketDebuggerUrl"], timeout=15)
+                ws.settimeout(10)
+                ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+                                    "params": {"expression": f"location.href='{url}'; 1",
+                                               "returnByValue": True}}))
+                ws.close()
+                _t.sleep(5)
+                return
+            except Exception:
+                self._TAB = None
+        requests.put(f"{self.cdp}/json/new?{url}", timeout=10)
+        _t.sleep(8)
+        tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                if isinstance(t, dict) and t.get("type") == "page" and "douyin.com" in (t.get("url") or "")]
+        if tabs:
+            self._TAB = tabs[-1]
 
     def _download(self, w: Work, detail: dict, dest: Path):
         out = dest / f"douyin-{w.wid}.mp4"
