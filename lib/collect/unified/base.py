@@ -163,14 +163,25 @@ class UnifiedAccountCollector:
         return stat
 
     def _ensure_uid(self, uid: str) -> str:
-        """账号标识归一：昵称/手机号 → 平台唯一 ID（hex_uid/sec_uid/mid）。"""
+        """账号标识归一：昵称/手机号 → 平台唯一 ID（hex_uid/sec_uid/mid）。
+        缓存缺失时调用平台 _resolve 并写回。"""
         if self.platform == "bilibili" and uid.isdigit():
             return uid
         extra = self._account_extra(uid)
-        if self.platform == "xhs" and extra.get("hex_uid"):
-            return extra["hex_uid"]
-        if self.platform == "douyin" and extra.get("sec_uid"):
-            return extra["sec_uid"]
+        if self.platform == "xhs":
+            if extra.get("hex_uid"):
+                return extra["hex_uid"]
+            resolved = self._resolve(uid)
+            if resolved:
+                self._save_account_extra(uid, {"hex_uid": resolved})
+            return resolved
+        if self.platform == "douyin":
+            if extra.get("sec_uid"):
+                return extra["sec_uid"]
+            resolved = self._resolve(uid)
+            if resolved:
+                self._save_account_extra(uid, {"sec_uid": resolved})
+            return resolved
         return uid
 
     def _upsert_work(self, uid: str, row: dict):
