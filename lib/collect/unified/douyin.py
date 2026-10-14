@@ -51,6 +51,8 @@ class DouyinCollector(UnifiedAccountCollector):
         time.sleep(12)
         tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                 if isinstance(t, dict) and t.get("type") == "page" and "douyin.com" in (t.get("url") or "")]
+        if not tabs:
+            return ""
         tab = tabs[-1]
         ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
         ws.settimeout(45)
@@ -69,6 +71,8 @@ class DouyinCollector(UnifiedAccountCollector):
         time.sleep(12)
         tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                 if isinstance(t, dict) and t.get("type") == "page" and f"/user/{uid}" in (t.get("url") or "")]
+        if not tabs:
+            return {}, []
         tab = tabs[-1]
         ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
         ws.settimeout(45)
@@ -132,6 +136,8 @@ class DouyinCollector(UnifiedAccountCollector):
             time.sleep(10)
             tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                     if isinstance(t, dict) and t.get("type") == "page" and "douyin.com" in (t.get("url") or "")]
+            if not tabs:
+                return None
             tab = tabs[-1]
             self._TAB = tab
             try:
@@ -154,12 +160,17 @@ class DouyinCollector(UnifiedAccountCollector):
             except Exception:
                 pass
             time.sleep(8)
-            # 重连（context 已死）
+            # 重连（context 已死）；URL 未及更新则退回任一 douyin tab
             tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                     if isinstance(t, dict) and t.get("type") == "page" and w.wid in (t.get("url") or "")]
             if not tabs:
+                tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                        if isinstance(t, dict) and t.get("type") == "page" and "douyin.com" in (t.get("url") or "")]
+            if not tabs:
+                self._TAB = None
                 return None
             tab = tabs[-1]
+            self._TAB = tab
             ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
         ws.settimeout(30)
         try:

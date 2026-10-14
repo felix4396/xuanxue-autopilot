@@ -88,7 +88,13 @@ class UnifiedAccountCollector:
 
     # ---- 模板方法：完整账号采集 ----
     def collect_account(self, uid: str, limit: int = 25, min_works: int = 10,
-                        want_comments: bool = False, dest: str | Path = "output/media") -> dict:
+                        want_comments: bool = False, dest: str | Path = "output/media",
+                        mode: str = "pool") -> dict:
+        """mode:
+        - "pool"   存量模式：抓满 limit 条为止（首次建库用）
+        - "monitor" 监控模式：每天盯最新——只抓"库里没有的新作品"，不受 limit 封顶。
+                    判定新作品 = wid 不在库；另外把最近 N 条卡全扫一遍防漏。
+        """
         dest = Path(dest)
         stat = {"platform": self.platform, "uid": uid, "works_new": 0, "media_new": 0,
                 "comments_new": 0, "skipped": False, "reason": ""}
@@ -97,13 +103,16 @@ class UnifiedAccountCollector:
             stat["reason"] = "resolve_failed"
             stat["skipped"] = True
             return stat
+        # have = 库里所有已登记 wid（含未下载成功的），monitor 模式以此判定新作品
         have = self._have_media(uid)
+        have_all = {r[0] for r in self.con.execute(
+            "SELECT wid FROM works WHERE platform=? AND uid=?", (self.platform, uid))}
         n_have = len(have)
-        if n_have >= limit:
+        if mode == "pool" and n_have >= limit:
             stat["skipped"], stat["reason"] = True, f"full({n_have})"
             return stat
 
-        # 主页 1 次
+        # 主页 1 次（monitor 模式也必须开——新作品只能从主页卡发现）
         prof, works = self._fetch_profile(uid, limit)
         if prof:
             self._save_account_extra(uid, {}, prof)
@@ -111,8 +120,12 @@ class UnifiedAccountCollector:
             stat["reason"] = "no_cards"
             return stat
 
-        # 缺口 = 未下载的作品；按热度排序优先抓爆款
-        todo = [w for w in works if w.wid not in have][: max(0, min_works - n_have) or len(works)]
+        if mode == "monitor":
+            # 只抓库里完全没有的新 wid（发布即抓，无上限）
+            todo = [w for w in works if w.wid not in have_all]
+        else:
+            # 缺口 = 未下载的作品；按热度排序优先抓爆款
+            todo = [w for w in works if w.wid not in have][: max(0, min_works - n_have) or len(works)]
         todo.sort(key=lambda w: w.likes, reverse=True)
 
         for w in todo:
@@ -144,6 +157,14 @@ class UnifiedAccountCollector:
         return stat
 
     def _ensure_uid(self, uid: str) -> str:
+        """账号标识归一：昵称/手机号 → 平台唯一 ID（hex_uid/sec_uid/mid）。"""
+        if self.platform == "bilibili" and uid.isdigit():
+            return uid
+        extra = self._account_extra(uid)
+        if self.platform == "xhs" and extra.get("hex_uid"):
+            return extra["hex_uid"]
+        if self.platform == "douyin" and extra.get("sec_uid"):
+            return extra["sec_uid"]
         return uid
 
     def _upsert_work(self, uid: str, row: dict):

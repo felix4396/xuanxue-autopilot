@@ -60,6 +60,8 @@ def main():
     ap.add_argument("--min-works", type=int, default=10)
     ap.add_argument("--want-comments", action="store_true", help="对爆款抓评论")
     ap.add_argument("--comment-threshold", type=int, default=200, help="评论数阈值才算爆款")
+    ap.add_argument("--mode", choices=["pool", "monitor"], default="pool",
+                    help="pool=存量抓满上限；monitor=每日监控只抓新作品（不受上限封顶）")
     ap.add_argument("--no-cleanup", action="store_true", help="跳过 tab 清扫")
     args = ap.parse_args()
     if not args.no_cleanup:
@@ -88,7 +90,7 @@ def main():
             try:
                 want_c = args.want_comments
                 r = col.collect_account(uid, limit=args.limit, min_works=args.min_works,
-                                        want_comments=want_c)
+                                        want_comments=want_c, mode=args.mode)
             except Exception as e:
                 msg = str(e)[:80]
                 if "hex_uid_stale" in msg:
