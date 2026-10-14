@@ -124,9 +124,6 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
             asr = media_src / "asr.json"
             if asr.exists():
                 shutil.copy2(asr, dest / "asr.json")
-            audio = media_src / "audio.m4a"
-            if audio.exists():
-                shutil.copy2(audio, dest / "audio.m4a")  # 音频小，保留供复听
 
     # ---- 3. 评论 comments.json ----
     if comments:
