@@ -87,13 +87,19 @@ class UnifiedAccountCollector:
             (self.platform, uid))}
 
     # ---- 模板方法：完整账号采集 ----
-    def collect_account(self, uid: str, limit: int = 25, min_works: int = 10,
+    def collect_account(self, uid: str, count: int | str = 10,
                         want_comments: bool = False, dest: str | Path = "output/media",
-                        mode: str = "pool") -> dict:
-        """mode:
-        - "pool"   存量模式：抓满 limit 条为止（首次建库用）
-        - "monitor" 监控模式：每天盯最新——只抓"库里没有的新作品"，不受 limit 封顶。
-                    判定新作品 = wid 不在库；另外把最近 N 条卡全扫一遍防漏。
+                        mode: str = "latest", order: str = "latest") -> dict:
+        """count: 抓取数量。
+        - int  如 10 = 抓 10 条；0 = 只刷新元数据不下载
+        - "all" = 主页能看到的全部作品
+
+        mode:
+        - "latest" 默认：按主页时间线取前 N 条（最近的在前）
+        - "monitor" 每日盯新：只抓库里没有的新 wid（发布即抓，无上限）
+        - "top" 热度优先：未抓的作品按点赞排序取前 N
+
+        order: 仅 latest 模式生效——"latest" 取最近 N 条；"top" 取最热 N 条。
         """
         dest = Path(dest)
         stat = {"platform": self.platform, "uid": uid, "works_new": 0, "media_new": 0,
@@ -103,17 +109,13 @@ class UnifiedAccountCollector:
             stat["reason"] = "resolve_failed"
             stat["skipped"] = True
             return stat
-        # have = 库里所有已登记 wid（含未下载成功的），monitor 模式以此判定新作品
         have = self._have_media(uid)
         have_all = {r[0] for r in self.con.execute(
             "SELECT wid FROM works WHERE platform=? AND uid=?", (self.platform, uid))}
-        n_have = len(have)
-        if mode == "pool" and n_have >= limit:
-            stat["skipped"], stat["reason"] = True, f"full({n_have})"
-            return stat
 
-        # 主页 1 次（monitor 模式也必须开——新作品只能从主页卡发现）
-        prof, works = self._fetch_profile(uid, limit)
+        # 主页卡数量：all → 大页拉满；数字 → 拉对应卡数
+        fetch_n = 60 if (count == "all" or (isinstance(count, int) and count > 25)) else max(int(count) + 5, 15)
+        prof, works = self._fetch_profile(uid, fetch_n)
         if prof:
             self._save_account_extra(uid, {}, prof)
         if not works:
@@ -121,12 +123,16 @@ class UnifiedAccountCollector:
             return stat
 
         if mode == "monitor":
-            # 只抓库里完全没有的新 wid（发布即抓，无上限）
             todo = [w for w in works if w.wid not in have_all]
-        else:
-            # 缺口 = 未下载的作品；按热度排序优先抓爆款
-            todo = [w for w in works if w.wid not in have][: max(0, min_works - n_have) or len(works)]
-        todo.sort(key=lambda w: w.likes, reverse=True)
+        elif mode == "top" or (mode == "latest" and order == "top"):
+            todo = [w for w in works if w.wid not in have_all]
+            todo.sort(key=lambda w: w.likes, reverse=True)
+            if count != "all":
+                todo = todo[:int(count)]
+        else:  # latest：主页卡时间线序（最新在前）
+            todo = [w for w in works if w.wid not in have_all]
+            if count != "all":
+                todo = todo[:int(count)]
 
         for w in todo:
             out = dest / f"{self.platform}-{w.wid}.mp4"

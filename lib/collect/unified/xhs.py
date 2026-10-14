@@ -109,7 +109,8 @@ class XhsCollector(UnifiedAccountCollector):
             time.sleep(10)
             if "website-login/error" in (self._ev(ws, "location.href") or ""):
                 raise RuntimeError("account_blocked_300011")
-            # 失效 uid 检测：页面渲染但无昵称 = hex 过期
+            # 空 profile 检测：可能 hex 过期，也可能账号被静默风控。
+            # 防误伤：连续 2 次空才报 stale（单次空 → 报风控，不清缓存）
             prof_r = self._ev(ws, """(() => {
               const st = (window.__INITIAL_STATE__ || {}).user || {};
               const u = st.userInfo || {};
@@ -117,7 +118,18 @@ class XhsCollector(UnifiedAccountCollector):
             })()""")
             _p0 = json.loads(prof_r or "{}")
             if not _p0.get("nickname"):
-                raise RuntimeError("hex_uid_stale")
+                # 重开一次确认（不同时间点渲染可能恢复）
+                time.sleep(20)
+                try:
+                    _p1r = self._ev(ws, """(() => {
+                      const st = (window.__INITIAL_STATE__ || {}).user || {};
+                      return JSON.stringify({nickname: (st.userInfo||{}).nickname || ''});
+                    })()""")
+                    _p0 = json.loads(_p1r or _p0) if _p1r else _p0
+                except Exception:
+                    pass
+                if not _p0.get("nickname"):
+                    raise RuntimeError("profile_empty_or_risk")
             prof = {"nickname": _p0.get("nickname", ""),
                     "followers": _p0.get("fans", 0) or _p0.get("fansCount", 0)}
             # 主页卡：/user/profile/{hex}/{noteId}?xsec_token=..

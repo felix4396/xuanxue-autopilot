@@ -32,18 +32,30 @@ class BilibiliCollector(UnifiedAccountCollector):
         return ""
 
     def _fetch_profile(self, uid: str, limit: int):
-        # space API（免页面）：账号信息 + 视频列表分页
-        info = requests.get(f"https://api.bilibili.com/x/space/acc/info?mid={uid}",
-                            headers=_HDRS, timeout=15).json()
-        name = ((info.get("data") or {}).get("name")) or uid
-        followers = int(((info.get("data") or {}).get("follower")) or 0) if info.get("code") == 0 else 0
+        # space API（免页面）：账号信息 + 视频列表分页；限流时退化为纯列表
+        import time as _t
+        name, followers = uid, 0
+        for attempt in range(3):
+            try:
+                info = requests.get(f"https://api.bilibili.com/x/space/acc/info?mid={uid}",
+                                    headers=_HDRS, timeout=15).json()
+                name = ((info.get("data") or {}).get("name")) or uid
+                followers = int(((info.get("data") or {}).get("follower")) or 0) if info.get("code") == 0 else 0
+                break
+            except Exception:
+                if attempt == 2:
+                    break
+                _t.sleep(3 * (attempt + 1))
         works = []
         pn = 1
         while len(works) < limit and pn <= 3:
             u = ("https://api.bilibili.com/x/space/wbi/arc/search?"
                  + urllib.parse.urlencode({"mid": uid, "pn": pn, "ps": 25, "order": "pubdate"}))
-            r = requests.get(u, headers=_HDRS, timeout=15,
-                             cookies={"buvid3": "x"}).json()
+            try:
+                r = requests.get(u, headers=_HDRS, timeout=15,
+                                 cookies={"buvid3": "x"}).json()
+            except Exception:
+                break
             vlist = ((r.get("data") or {}).get("list") or {}).get("vlist") or []
             if not vlist:
                 break
