@@ -40,8 +40,13 @@ def main():
     _xhs_empty_streak = {}
     # 账号级风控闸门：website-login/error (300011) → xhs 停采 COOLDOWN 秒
     import time as _tmod
-    _xhs_block_until = 0.0
     _XHS_COOLDOWN = 3 * 3600  # 3 小时
+    # 闸门持久化（跨轮/跨进程生效——否则每轮新进程归零，每轮都白开一次搜索页）
+    import pathlib as _pl3, time as _tmod
+    _block_file = _pl3.Path("data/xhs_block_until")
+    _xhs_block_until = 0.0
+    if _block_file.exists():
+        _xhs_block_until = float(_block_file.read_text().strip() or 0)
     for p, uid, nick, fans, extra_s in accounts:
         have = con.execute(
             "SELECT count(*) FROM works WHERE platform=? AND uid=? AND media_path!=''",
@@ -113,7 +118,8 @@ def main():
                 continue
             if r.get("account_blocked"):
                 _xhs_block_until = _tmod.time() + _XHS_COOLDOWN
-                print(f"  ⚠️ 账号级风控(300011)：xhs 全平台停采 3 小时")
+                _block_file.write_text(str(_xhs_block_until))
+                print(f"  ⚠️ 账号级风控(300011)：xhs 全平台停采 3 小时（已持久化）")
                 break
             works = r.get("works", [])
             ok = 0
