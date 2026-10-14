@@ -190,13 +190,23 @@ class XhsCollector(UnifiedAccountCollector):
                           if (media[k] && media[k][0] && media[k][0].masterUrl) { videoUrl = media[k][0].masterUrl; break; }
                         }
                         const it = n.interactInfo || {};
+                        // 评论区（同一页面顺带解析）
+                        const cs = (nd||{}).comments || {};
+                        const clist = (cs.list || []).slice(0, 30).map(c => ({
+                          cid: c.id, uid: (c.userInfo||{}).userId || '',
+                          nickname: (c.userInfo||{}).nickname || '',
+                          content: (c.content||'').slice(0, 500),
+                          likes: c.likeCount || 0,
+                          parent_cid: c.targetComment ? c.targetComment.id : ''
+                        }));
                         return JSON.stringify({
                           title: n.title || '', desc: (n.desc||'').slice(0,1000),
                           type: n.type || '',
                           images: (n.imageList||[]).map(i => i.urlDefault || ''),
                           videoUrl,
                           likes: it.likedCount || '0', comments: it.commentCount || '0',
-                          shares: it.shareCount || '0', collects: it.collectedCount || '0'
+                          shares: it.shareCount || '0', collects: it.collectedCount || '0',
+                          comments: clist
                         });
                       }
                       return null;
@@ -212,8 +222,9 @@ class XhsCollector(UnifiedAccountCollector):
             return {"title": d.get("title", ""), "desc": d.get("desc", ""),
                     "content_type": "video" if d.get("videoUrl") else ("image_text" if d.get("images") else "text"),
                     "media_urls": ([d["videoUrl"]] if d.get("videoUrl") else d.get("images", [])[:10]),
-                    "likes": pc(d.get("likes")), "comments": pc(d.get("comments")),
-                    "shares": pc(d.get("shares")), "collected": pc(d.get("collects"))}
+                    "likes": pc(d.get("likes")), "comments_count": pc(d.get("comments")),
+                    "shares": pc(d.get("shares")), "collected": pc(d.get("collects")),
+                    "comments": d.get("comments", [])}
         finally:
             ws.close()
             try:

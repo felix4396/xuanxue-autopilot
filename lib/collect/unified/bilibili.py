@@ -46,14 +46,20 @@ class BilibiliCollector(UnifiedAccountCollector):
                 if attempt == 2:
                     break
                 _t.sleep(3 * (attempt + 1))
+        works = self._works_via_api(uid, limit)
+        if not works:
+            works = self._works_via_dom(uid, limit)  # wbi 412 时的 DOM 通道
+        return {"nickname": name, "followers": followers}, works[:limit]
+
+    def _works_via_api(self, uid: str, limit: int) -> list:
+        """wbi 列表 API（部分环境 412）。"""
+        import urllib.parse as _up
         works = []
-        pn = 1
-        while len(works) < limit and pn <= 3:
+        for pn in (1, 2):
             u = ("https://api.bilibili.com/x/space/wbi/arc/search?"
-                 + urllib.parse.urlencode({"mid": uid, "pn": pn, "ps": 25, "order": "pubdate"}))
+                 + _up.urlencode({"mid": uid, "pn": pn, "ps": 25, "order": "pubdate"}))
             try:
-                r = requests.get(u, headers=_HDRS, timeout=15,
-                                 cookies={"buvid3": "x"}).json()
+                r = requests.get(u, headers=_HDRS, timeout=15).json()
             except Exception:
                 break
             vlist = ((r.get("data") or {}).get("list") or {}).get("vlist") or []
@@ -63,11 +69,84 @@ class BilibiliCollector(UnifiedAccountCollector):
                 works.append(Work(
                     wid=v["bvid"], title=v.get("title", ""), desc=v.get("description", ""),
                     content_type="video", likes=0, comments=int(v.get("comment", 0) or 0),
-                    shares=0, collected_count=0,
                     ts=float(v.get("created", 0) or 0),
                     url=f"https://www.bilibili.com/video/{v['bvid']}"))
-            pn += 1
-        return {"nickname": name, "followers": followers}, works[:limit]
+            if len(works) >= limit:
+                break
+        return works
+
+    def _works_via_dom(self, uid: str, limit: int) -> list:
+        """space DOM（412 fallback）：space 页小卡片，Chrome 直接渲染。"""
+        import time as _t
+        import websocket as _ws
+        before = {t["id"] for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                  if isinstance(t, dict)}
+        requests.put(f"{self.cdp}/json/new?https://space.bilibili.com/{uid}/uploads/videos",
+                     timeout=10)
+        _t.sleep(12)
+        works = []
+        tab = None
+        try:
+            tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                    if isinstance(t, dict) and t.get("type") == "page"
+                    and "space.bilibili.com" in (t.get("url") or "")]
+            if not tabs:
+                tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
+                        if isinstance(t, dict) and t.get("type") == "page"
+                        and t["id"] not in before and "bilibili.com" in (t.get("url") or "")]
+            if not tabs:
+                return []
+            tab = tabs[-1]
+            ws = _ws.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+            ws.settimeout(45)
+            _mid = 10
+            for _ in range(6):
+                try:
+                    ws.send(json.dumps({"id": _mid, "method": "Runtime.evaluate", "params": {
+                        "expression": "window.scrollTo(0, document.body.scrollHeight); 1",
+                        "returnByValue": True}}))
+                    ws.recv()
+                except Exception:
+                    pass
+                _mid += 1
+                _t.sleep(3)
+                try:
+                    ws.send(json.dumps({"id": _mid, "method": "Runtime.evaluate", "params": {
+                        "expression": """(() => {
+                          const out = [];
+                          document.querySelectorAll('a[href*="/video/BV"]').forEach(a => {
+                            const bv = ((a.getAttribute('href')||'').match(/video\/(BV[0-9A-Za-z]+)/) || [])[1];
+                            if (bv && !out.find(o => o.bv === bv)) {
+                              const card = a.closest('.small-item, .bili-video-card, li') || a.parentElement;
+                              const txt = (card ? card.innerText : '') || '';
+                              out.push({bv, title: txt.split('\n')[0].slice(0, 80)});
+                            }
+                          });
+                          return JSON.stringify(out);
+                        })()""",
+                        "returnByValue": True}}))
+                    m = json.loads(ws.recv())
+                    if m.get("id") != _mid:
+                        continue  # 旧 scrollTo 响应，跳过
+                    cards = json.loads(m.get("result", {}).get("result", {}).get("value") or "[]")
+                except Exception:
+                    cards = []
+                _mid += 1
+                for c in cards:
+                    if not any(w.wid == c["bv"] for w in works):
+                        works.append(Work(wid=c["bv"], title=c.get("title", ""),
+                                          content_type="video",
+                                          url=f"https://www.bilibili.com/video/{c['bv']}"))
+                if len(works) >= limit:
+                    break
+            ws.close()
+        finally:
+            if tab:
+                try:
+                    requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+                except Exception:
+                    pass
+        return works
 
     def _fetch_work(self, w: Work) -> dict:
         r = requests.get(f"https://api.bilibili.com/x/web-interface/view?bvid={w.wid}",

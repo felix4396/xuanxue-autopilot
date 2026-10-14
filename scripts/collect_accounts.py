@@ -62,7 +62,10 @@ def main():
                     help="latest=最近优先（主页时间线前 N）；top=热度优先（未抓的按点赞排前 N）")
     ap.add_argument("--mode", choices=["latest", "monitor", "top"], default="latest",
                     help="latest=按数量抓；monitor=每日盯新；top=热度优先")
-    ap.add_argument("--want-comments", action="store_true", help="对爆款抓评论")
+    ap.add_argument("--want-comments", dest="want_comments", action="store_true", default=True,
+                    help="抓评论（默认开：爆款/零成本通道）")
+    ap.add_argument("--no-comments", dest="want_comments", action="store_false",
+                    help="关闭评论采集")
     ap.add_argument("--comment-threshold", type=int, default=200, help="评论数阈值才算爆款")
     ap.add_argument("--no-cleanup", action="store_true", help="跳过 tab 清扫")
     args = ap.parse_args()

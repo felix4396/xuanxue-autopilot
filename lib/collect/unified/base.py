@@ -87,8 +87,10 @@ class UnifiedAccountCollector:
             (self.platform, uid))}
 
     # ---- 模板方法：完整账号采集 ----
+    comment_threshold: int = 50  # 评论数≥此值才算爆款，才值得开评论页
+
     def collect_account(self, uid: str, count: int | str = 10,
-                        want_comments: bool = False, dest: str | Path = "output/media",
+                        want_comments: bool = True, dest: str | Path = "output/media",
                         mode: str = "latest", order: str = "latest") -> dict:
         """count: 抓取数量。
         - int  如 10 = 抓 10 条；0 = 只刷新元数据不下载
@@ -141,6 +143,7 @@ class UnifiedAccountCollector:
                 continue
             detail = self._fetch_work(w)
             row = w.to_row()
+            comments = detail.pop("comments", [])  # 详情页顺带抓的评论
             row.update({k: v for k, v in detail.items() if v not in (None, "", [])})
             try:
                 mp = self._download(w, detail, dest)
@@ -152,7 +155,11 @@ class UnifiedAccountCollector:
             stat["works_new"] += 1
             if mp:
                 stat["media_new"] += 1
-            if want_comments:
+            # 评论随作品页顺带入库（详情页已打开，零额外页面开销）
+            if want_comments and comments:
+                stat["comments_new"] += self._upsert_comments(w.wid, comments)
+            elif want_comments and self.platform in ("bilibili", "weibo", "youtube", "douyin"):
+                # API 平台：评论不在详情页 DOM 里，走零成本 API 补
                 try:
                     cmts = self._fetch_comments(w)
                     if cmts:
