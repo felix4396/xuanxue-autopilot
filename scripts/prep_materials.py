@@ -28,6 +28,8 @@ def main():
                     help="目标帧数（按视频时长算 fps，长视频≈N帧）；0=用 --fps")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--skip-asr", action="store_true", help="只抽帧不转写")
+    ap.add_argument("--engine", choices=["local", "cloud"], default="local",
+                    help="cloud=阿里云百炼 filetrans（快、带字级时间戳）")
     args = ap.parse_args()
 
     vp = VideoPrep(ROOT / "output" / "media")
@@ -65,7 +67,10 @@ def main():
                     print(f"  ✅ {p}/{wid[:22]} 帧{len(frames)} + audio")
                     ok += 1
                     continue
-                asr = vp.transcribe(v, p, wid, model_size=args.model)
+                if args.engine == "cloud":
+                    asr = vp.transcribe_cloud(v, p, wid)
+                else:
+                    asr = vp.transcribe(v, p, wid, model_size=args.model)
                 vp.meta(v, p, wid)
                 n_seg = len(json.loads(asr.read_text()))
                 print(f"  ✅ {p}/{wid[:22]} 帧{len(frames)} asr段{n_seg} audio✓")
