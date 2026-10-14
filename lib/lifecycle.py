@@ -64,7 +64,14 @@ def sweep(dry: bool = False, days: int | None = None, mode: str = "delete") -> d
     con = sqlite3.connect(ROOT / "data" / "bench.db")
     stats = {"deleted": 0, "archived": 0, "kept_incomplete": 0, "no_video": 0}
     for platform, wid, mpath in con.execute(
-            "SELECT platform, wid, media_path FROM works WHERE media_path LIKE '%.mp4'").fetchall():
+            "SELECT platform, wid, media_path FROM works").fetchall():
+        # media_path 空但磁盘有 {p}-{wid}.mp4 的（历史漏登记）也纳入处置
+        if not mpath:
+            cand = ROOT / "output" / "media" / f"{platform}-{wid}.mp4"
+            if cand.exists():
+                mpath = str(cand)
+            else:
+                continue
         src = Path(mpath)
         if not src.is_absolute():
             src = ROOT / src

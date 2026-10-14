@@ -105,13 +105,28 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
         if media_src.is_file():
             ext = media_src.suffix or ".bin"
             if ext.lower() in (".mp4", ".m4a", ".webm", ".mov"):
-                # 原视频不拷贝；从同名素材包取帧做封面
+                # 原视频不拷贝；从同名素材包取封面+三帧+文字稿
                 pack = media_src.parent / media_src.stem
                 frames = sorted(pack.glob("frames/*.jpg")) or sorted(pack.glob("frames/*.png"))
                 if frames:
                     shutil.copy2(frames[0], dest / "media-cover.jpg")
+                    for tag, f in (("first", frames[0]),
+                                   ("mid", frames[len(frames) // 2]),
+                                   ("last", frames[-1])):
+                        shutil.copy2(f, dest / f"frame-{tag}{f.suffix}")
+                if (pack / "asr.json").exists():
+                    shutil.copy2(pack / "asr.json", dest / "asr.json")
             else:
-                shutil.copy2(media_src, dest / f"media{ext}")  # 图片类直接拷
+                # 图集类：wid-N.jpg 系列全拷（原图都在，只拷一张会丢内容）
+                stem = media_src.stem.rsplit("-", 1)[0]  # 去掉 -1 尾巴
+                imgs = sorted(media_src.parent.glob(f"{stem}-*.jpg"),
+                              key=lambda x: int(x.stem.rsplit("-", 1)[-1])
+                              if x.stem.rsplit("-", 1)[-1].isdigit() else 0)
+                if len(imgs) > 1:
+                    for i, f in enumerate(imgs, 1):
+                        shutil.copy2(f, dest / f"img-{i}{f.suffix}")
+                else:
+                    shutil.copy2(media_src, dest / f"media{ext}")
         elif media_src.is_dir():
             # 素材包目录：封面帧 + 精简帧（首/中/尾）+ asr 文字稿
             frames = sorted(media_src.glob("frames/*.jpg")) or sorted(media_src.glob("frames/*.png"))
