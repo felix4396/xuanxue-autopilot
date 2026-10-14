@@ -253,11 +253,13 @@ def resolve_xhs_uid(adapter, red_id_or_name: str) -> dict | None:
             pass
 
 
-def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25) -> dict:
+def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25,
+                          skip_wids: set | None = None, prof: dict | None = None) -> dict:
     """抓 xhs 用户作品：搜索用户 → 该用户的笔记卡（带 xsec_token）→ 详情。"""
     import time as _t
     import urllib.parse as _up
-    prof = resolve_xhs_uid(adapter, red_id_or_name)
+    if prof is None or not prof.get("uid"):
+        prof = resolve_xhs_uid(adapter, red_id_or_name)
     if not prof or not prof.get("uid"):
         return {"profile": None, "works": []}
     uid = prof["uid"]

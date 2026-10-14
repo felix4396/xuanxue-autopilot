@@ -62,16 +62,21 @@ def main():
             from lib.profiles import scrape_xhs_user_works, resolve_xhs_uid
             from lib.collect.xhs_search import XhsSearchAdapter
             ad = XhsSearchAdapter()
-            # 更新 hex uid 与昵称
-            prof = resolve_xhs_uid(ad, uid)
-            for attempt in range(3):
-                if prof:
-                    break
-                wait_s = 120 * (attempt + 1)
-                print(f"  频控，等 {wait_s}s 重试（{attempt+1}/3）…")
-                time.sleep(wait_s)
+            # hex_uid 已缓存 → 直接用（省一次 resolve 搜索页）
+            _hex = (extra.get("hex_uid") or "").strip()
+            _rnick = extra.get("resolved_nick") or ""
+            if _hex:
+                prof = {"uid": _hex, "nickname": _rnick}
+            else:
                 prof = resolve_xhs_uid(ad, uid)
-            if not prof:
+                for attempt in range(3):
+                    if prof and prof.get("uid"):
+                        break
+                    wait_s = 120 * (attempt + 1)
+                    print(f"  频控，等 {wait_s}s 重试（{attempt+1}/3）…")
+                    time.sleep(wait_s)
+                    prof = resolve_xhs_uid(ad, uid)
+            if not prof or not prof.get("uid"):
                 print("  resolve 失败（重试后），跳过")
                 continue
             hex_uid = prof["uid"]
@@ -85,7 +90,10 @@ def main():
             have_media = {row[0] for row in db.conn.execute(
                 "SELECT wid FROM works WHERE platform='xhs' AND uid=? AND media_path!=''",
                 (uid,)).fetchall()}
-            r = scrape_xhs_user_works(ad, uid, limit=25, skip_wids=have_media)
+            if len(have_media) >= 15:
+                print(f"  已有 {len(have_media)} media，跳过搜索")
+                continue
+            r = scrape_xhs_user_works(ad, uid, limit=25, skip_wids=have_media, prof=prof)
             if not isinstance(r, dict):
                 print("  works 抓取失败，跳过")
                 continue
@@ -116,15 +124,19 @@ def main():
             from lib.collect.douyin_dom import DouyinDomAdapter
             from lib.profiles import fetch_douyin_profile
             ad = DouyinDomAdapter()
+            _fresh_prof = False
             if fans and fans > 0:
                 prof = {"followers": fans, "nickname": nick or uid}
             else:
                 prof = fetch_douyin_profile(ad, uid)
+                _fresh_prof = True
             if prof and prof.get("followers"):
+                # 缓存 profile 用旧 extra（保留 sec_uid），新抓的才更新
                 db.upsert_account(p, uid, nickname=prof.get("nickname", uid),
                                   followers=prof["followers"],
                                   extra=json.dumps({**extra, "profile": prof},
-                                                   ensure_ascii=False))
+                                                   ensure_ascii=False) if _fresh_prof
+                                  else extra_s)
                 print(f"  profile ✅ 粉丝 {prof['followers']}")
             else:
                 print(f"  profile 失败: {prof}")
