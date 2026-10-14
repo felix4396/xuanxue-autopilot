@@ -74,6 +74,7 @@ class XhsSearchAdapter(BaseAdapter):
             # 浏览搜索页 → 点进一篇笔记（SPA），停留 5-15s，滚动 1-2 次，返回
             self.limiter._last.pop("xhs", None)  # 浏览本身就是"等待"
             dwell = _rd.uniform(5.0, 15.0)
+            ws, tab = None, None
             try:
                 ws, tab = self._open(
                     f"https://www.xiaohongshu.com/explore/{wid}"
@@ -85,9 +86,17 @@ class XhsSearchAdapter(BaseAdapter):
                 if _rd.random() < 0.5:
                     self._ev(ws, f"window.scrollTo(0, {int(_rd.uniform(400, 900))}); 1")
                     time.sleep(_rd.uniform(1.0, 2.5))
-                ws.close()
             except Exception:
                 pass
+            finally:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+                try:
+                    requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+                except Exception:
+                    pass
             print(f"  [xhs][拟人化] 浏览穿插完成（停留 {dwell:.0f}s）")
         except Exception:
             pass
