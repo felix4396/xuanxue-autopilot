@@ -38,6 +38,10 @@ def main():
     print(f"目标账号 {len(accounts)} 个")
     prev_platform = None
     _xhs_empty_streak = {}
+    # 账号级风控闸门：website-login/error (300011) → xhs 停采 COOLDOWN 秒
+    import time as _tmod
+    _xhs_block_until = 0.0
+    _XHS_COOLDOWN = 3 * 3600  # 3 小时
     for p, uid, nick, fans, extra_s in accounts:
         have = con.execute(
             "SELECT count(*) FROM works WHERE platform=? AND uid=? AND media_path!=''",
@@ -59,9 +63,13 @@ def main():
                 print(f"=== [{p}] {uid} 已有 profile+{_n} media，跳过 ===")
                 continue
         # xhs 连续空轮熔断：上轮 0 卡的账号本轮跳过（风控中，等下轮自然重试）
-        if p == "xhs" and _xhs_empty_streak.get(uid, 0) >= 2:
-            print(f"=== [{p}] {uid} 连续 {_xhs_empty_streak[uid]} 轮空卡，熔断跳过 ===")
-            continue
+        if p == "xhs":
+            if _tmod.time() < _xhs_block_until:
+                print(f"=== [{p}] {uid} 账号风控冷却中（至 {_tmod.strftime('%H:%M', _tmod.localtime(_xhs_block_until))}），跳过 ===")
+                continue
+            if _xhs_empty_streak.get(uid, 0) >= 2:
+                print(f"=== [{p}] {uid} 连续 {_xhs_empty_streak[uid]} 轮空卡，熔断跳过 ===")
+                continue
         print(f"\n=== [{p}] {uid} ({fans} 粉) ===")
         if p == "xhs":
             from lib.profiles import scrape_xhs_user_works, resolve_xhs_uid
@@ -103,6 +111,10 @@ def main():
                 print("  works 抓取失败，跳过")
                 _xhs_empty_streak[uid] = _xhs_empty_streak.get(uid, 0) + 1
                 continue
+            if r.get("account_blocked"):
+                _xhs_block_until = _tmod.time() + _XHS_COOLDOWN
+                print(f"  ⚠️ 账号级风控(300011)：xhs 全平台停采 3 小时")
+                break
             works = r.get("works", [])
             ok = 0
             for w in works:

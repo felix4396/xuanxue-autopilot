@@ -432,6 +432,12 @@ class XhsSearchAdapter(BaseAdapter):
         finally:
             if ws:
                 ws.close()
+            # 关闭 batch 的 tab（之前每轮泄漏一个同 URL tab，正是"反复打开同一页面"的来源）
+            if _tab:
+                try:
+                    _rq.get(f"{self.cdp}/json/close/{_tab['id']}", timeout=5)
+                except Exception:
+                    pass
         return results
 
     def fetch_note_detail(self, note_id: str, xsec_token: str = "") -> dict:

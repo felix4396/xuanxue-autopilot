@@ -281,6 +281,7 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25,
         })()"""
         cards = []
         target_n = limit
+        login_err = False
         for _ in range(14):
             _t.sleep(3)
             try:
@@ -288,6 +289,14 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25,
                 cards = json.loads(r or "[]")
             except Exception:
                 cards = []
+            # 账号级风控检测（300011 → website-login/error 重定向）
+            try:
+                u = adapter._ev(ws, "location.href")
+                if "website-login/error" in (u or ""):
+                    login_err = True
+                    break
+            except Exception:
+                pass
             if cards:
                 if len(cards) >= target_n:
                     break
@@ -296,6 +305,8 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25,
                     adapter._ev(ws, "window.scrollBy(0, 2500); 1")
                 except Exception:
                     pass
+        if login_err:
+            return {"profile": prof, "works": [], "account_blocked": True}
         nick = prof.get("nickname", "")
         seen = set()
         items = []
