@@ -710,6 +710,7 @@ def download_douyin_video(video_id: str, out_path: str) -> Path:
             ws.send(json.dumps({"id": 1, "method": "Page.reload"}))
             ws.recv()
         vbest, abest, t0 = (None, 0), (None, 0), _t.time()
+        _settle = 0  # 大流捕获后观察 6s 无更大流即提前退出
         while _t.time() - t0 < 45:
             try:
                 m = json.loads(ws.recv())
@@ -727,9 +728,15 @@ def download_douyin_video(video_id: str, out_path: str) -> Path:
                 if is_audio:
                     if cl > abest[1]:
                         abest = (u, cl)
+                        _settle = 0
                 else:
                     if cl > vbest[1]:
                         vbest = (u, cl)
+                        _settle = 0
+            if vbest[1] > 200000 and _settle == 0:
+                _settle = _t.time()  # 记录捕获时间
+            elif vbest[1] > 200000 and _t.time() - _settle > 8:
+                break
         url = vbest[0]
         aurl = abest[0]
     finally:

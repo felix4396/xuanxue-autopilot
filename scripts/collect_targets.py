@@ -37,6 +37,7 @@ def main():
     a = ap.parse_args()
     print(f"目标账号 {len(accounts)} 个")
     prev_platform = None
+    _xhs_empty_streak = {}
     for p, uid, nick, fans, extra_s in accounts:
         have = con.execute(
             "SELECT count(*) FROM works WHERE platform=? AND uid=? AND media_path!=''",
@@ -57,6 +58,10 @@ def main():
             if _n >= 10:
                 print(f"=== [{p}] {uid} 已有 profile+{_n} media，跳过 ===")
                 continue
+        # xhs 连续空轮熔断：上轮 0 卡的账号本轮跳过（风控中，等下轮自然重试）
+        if p == "xhs" and _xhs_empty_streak.get(uid, 0) >= 2:
+            print(f"=== [{p}] {uid} 连续 {_xhs_empty_streak[uid]} 轮空卡，熔断跳过 ===")
+            continue
         print(f"\n=== [{p}] {uid} ({fans} 粉) ===")
         if p == "xhs":
             from lib.profiles import scrape_xhs_user_works, resolve_xhs_uid
@@ -96,6 +101,7 @@ def main():
             r = scrape_xhs_user_works(ad, uid, limit=25, skip_wids=have_media, prof=prof)
             if not isinstance(r, dict):
                 print("  works 抓取失败，跳过")
+                _xhs_empty_streak[uid] = _xhs_empty_streak.get(uid, 0) + 1
                 continue
             works = r.get("works", [])
             ok = 0
@@ -120,6 +126,7 @@ def main():
                                                  "err": w.get("err", "")},
                                                 ensure_ascii=False))
             print(f"  {len(works)} 条卡，{ok} 条成功详情")
+            _xhs_empty_streak[uid] = 0 if works else _xhs_empty_streak.get(uid, 0) + 1
         elif p == "douyin":
             from lib.collect.douyin_dom import DouyinDomAdapter
             from lib.profiles import fetch_douyin_profile
