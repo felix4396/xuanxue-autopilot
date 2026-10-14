@@ -100,20 +100,33 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
     content = "\n".join(lines).strip() + "\n"
     (dest / "content.md").write_text(content, encoding="utf-8")
 
-    # ---- 2. 媒体 media.* ----
+    # ---- 2. 媒体（轻量资产：帧图 + 文字稿；原视频不进语料库）----
     if media_src and media_src.exists():
         if media_src.is_file():
             ext = media_src.suffix or ".bin"
-            shutil.copy2(media_src, dest / f"media{ext}")
+            if ext.lower() in (".mp4", ".m4a", ".webm", ".mov"):
+                # 原视频不拷贝；从同名素材包取帧做封面
+                pack = media_src.parent / media_src.stem
+                frames = sorted(pack.glob("frames/*.jpg")) or sorted(pack.glob("frames/*.png"))
+                if frames:
+                    shutil.copy2(frames[0], dest / "media-cover.jpg")
+            else:
+                shutil.copy2(media_src, dest / f"media{ext}")  # 图片类直接拷
         elif media_src.is_dir():
-            # 抽帧目录：只导首帧作媒体封面（避免数百张帧图）
-            frames = sorted(media_src.glob("*.jpg")) or sorted(media_src.glob("*.png"))
+            # 素材包目录：封面帧 + 精简帧（首/中/尾）+ asr 文字稿
+            frames = sorted(media_src.glob("frames/*.jpg")) or sorted(media_src.glob("frames/*.png"))
             if frames:
                 shutil.copy2(frames[0], dest / "media-cover.jpg")
-            for sub in media_src.iterdir():
-                if sub.is_file() and sub.suffix.lower() in (".mp4", ".m4a", ".webm"):
-                    shutil.copy2(sub, dest / f"media{sub.suffix}")
-                    break
+                for tag, f in (("first", frames[0]),
+                               ("mid", frames[len(frames) // 2]),
+                               ("last", frames[-1])):
+                    shutil.copy2(f, dest / f"frame-{tag}{f.suffix}")
+            asr = media_src / "asr.json"
+            if asr.exists():
+                shutil.copy2(asr, dest / "asr.json")
+            audio = media_src / "audio.m4a"
+            if audio.exists():
+                shutil.copy2(audio, dest / "audio.m4a")  # 音频小，保留供复听
 
     # ---- 3. 评论 comments.json ----
     if comments:
@@ -123,8 +136,11 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
     # ---- 4. 元数据 meta.json ----
     # 媒体状态：可选件——有就存，没有就标注原因（兼容纯文本内容）
     media_files = sorted([p.name for p in dest.glob("media*")])
-    if media_files:
-        media_meta = {"status": "ok", "files": media_files, "type": "video" if any(f.endswith(".mp4") for f in media_files) else "image"}
+    if (dest / "asr.json").exists() or (dest / "frame-first.jpg").exists():
+        media_meta = {"status": "ok", "files": media_files,
+                      "type": "video_frames" if (dest / "frame-first.jpg").exists() else "image"}
+    elif media_files:
+        media_meta = {"status": "ok", "files": media_files, "type": "image"}
     elif media_src is None:
         media_meta = {"status": "no_media", "files": [], "type": None,
                       "reason": "该作品为纯文本内容或平台未提供媒体"}

@@ -68,6 +68,7 @@ def main():
                     help="关闭评论采集")
     ap.add_argument("--comment-threshold", type=int, default=200, help="评论数阈值才算爆款")
     ap.add_argument("--no-cleanup", action="store_true", help="跳过 tab 清扫")
+    ap.add_argument("--no-sweep", action="store_true", help="跳过采集后原视频归档")
     args = ap.parse_args()
     if not args.no_cleanup:
         n = cleanup_tabs()
@@ -118,6 +119,15 @@ def main():
                 print(f"  ✅ {uid} +{r['works_new']} 作品 / +{r['media_new']} 媒体"
                       + (f" / +{r['comments_new']} 评论" if r.get("comments_new") else "")
                       + f"（{dur:.0f}s）")
+
+    # 生命周期：把已加工完（frames+asr 齐）的原视频归档到 output/archive/
+    if not args.no_sweep:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from lib.lifecycle import sweep
+        s = sweep()
+        if s["archived"]:
+            print(f"\n📦 归档原视频 {s['archived']} 个（素材齐备，原片移入 output/archive/）")
 
 
 if __name__ == "__main__":
