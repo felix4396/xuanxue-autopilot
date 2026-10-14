@@ -1,4 +1,4 @@
-"""一键数据管线：采集 → 加工(ASR) → 瘦身 → 语料导出 → 账号画像。
+"""一键数据管线：采集 → 加工(ASR) → 瘦身 → 语料导出 → 账号画像 → 内容资产。
 
 用法:
   python scripts/pipeline.py                    # 全流程（采集所有账号）
@@ -12,6 +12,7 @@
   3. 瘦身   lifecycle sweep       素材齐备即删原片，source_url 留档
   4. 导出   corpus export_all     轻量资产: 帧图+全图集+文字稿+链接
   5. 画像   analyze/profile.py    账号级风格资产沉淀（LLM 提炼）
+  6. 资产   analyze/content_assets.py 逐作品精华卡+账号归并（选题/金句/话术库）
 """
 import argparse
 import subprocess

@@ -12,6 +12,7 @@
 | 采集下载 | `lib/collect/` | MediaCrawler/yt-dlp 适配层 + 限速风控 |
 | 分析拆解 | `lib/analyze/` | 钩子/结构/封面拆解，沉淀资产库 |
 | 账号画像 | `lib/analyze/profile.py` | LLM 提炼账号风格/领域/文案特征 → `output/assets/profiles.json`，供内容生成模仿 |
+| 内容资产 | `lib/analyze/content_assets.py` | 逐作品文字稿浓缩精华卡 + 账号级归并（选题清单/金句池/话术模板）→ `output/assets/content_assets.json` |
 | 内容产出 | `lib/compose/` | 仿写初稿 + 去 AI 味 + 多平台格式适配 |
 | 发布队列 | `lib/publish/` | 人审网关 + 批量/定时发布适配 |
 | 复盘回流 | `lib/review/` | 发布后数据回采，结论写回资产库 |
