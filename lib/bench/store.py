@@ -127,6 +127,44 @@ class BenchStore:
         )
         self.conn.commit()
 
+    def upsert_comments(self, platform: str, wid: str, items: list[dict]) -> int:
+        """统一评论入库。item: {cid, uid?, nickname?, content, likes?, parent_cid?, extra?}"""
+        import json as _json
+        import time as _time
+        n = 0
+        for it in items:
+            if not it.get("cid"):
+                continue
+            try:
+                self.conn.execute(
+                    """INSERT OR REPLACE INTO comments
+                       (platform, wid, cid, uid, nickname, content, likes, parent_cid, extra, synced_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (platform, wid, str(it["cid"]), str(it.get("uid", "")),
+                     str(it.get("nickname", "")), str(it.get("content", "")),
+                     int(it.get("likes", 0) or 0), str(it.get("parent_cid", "")),
+                     _json.dumps(it.get("extra", {}), ensure_ascii=False), _time.time()))
+                n += 1
+            except Exception:
+                continue
+        self.conn.commit()
+        return n
+
+    def list_comments(self, platform: str | None = None, wid: str | None = None) -> list[dict]:
+        q = "SELECT * FROM comments WHERE 1=1"
+        args: list = []
+        if platform:
+            q += " AND platform=?"
+            args.append(platform)
+        if wid:
+            q += " AND wid=?"
+            args.append(wid)
+        q += " ORDER BY likes DESC"
+        self.conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in self.conn.execute(q, args)]
+        self.conn.row_factory = None
+        return rows
+
     def mark(self, platform: str, wid: str, field: str, value: int = 1) -> None:
         assert field in ("collected", "analyzed")
         self.conn.execute(
