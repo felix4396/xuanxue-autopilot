@@ -124,30 +124,50 @@ class UnifiedAccountCollector:
             stat["reason"] = "no_cards"
             return stat
 
+        # 正文空的历史作品（风控时被吞）视同待抓，下轮自动重试
+        have_partial = {r[0] for r in self.con.execute(
+            "SELECT wid FROM works WHERE platform=? AND uid=? AND title=''", (self.platform, uid))}
         if mode == "monitor":
-            todo = [w for w in works if w.wid not in have_all]
+            todo = [w for w in works if w.wid not in have_all or w.wid in have_partial]
         elif mode == "top" or (mode == "latest" and order == "top"):
-            todo = [w for w in works if w.wid not in have_all]
+            todo = [w for w in works if w.wid not in have_all or w.wid in have_partial]
             todo.sort(key=lambda w: w.likes, reverse=True)
             if count != "all":
                 todo = todo[:int(count)]
         else:  # latest：主页卡时间线序（最新在前）
-            todo = [w for w in works if w.wid not in have_all]
+            todo = [w for w in works if w.wid not in have_all or w.wid in have_partial]
             if count != "all":
                 todo = todo[:int(count)]
 
         for w in todo:
             out = dest / f"{self.platform}-{w.wid}.mp4"
-            if out.exists() and str(out) in {r[0] for r in self.con.execute(
-                    "SELECT media_path FROM works WHERE wid=?", (w.wid,))}:
+            pack = dest / f"{self.platform}-{w.wid}"
+            have_media = (str(out) in {r[0] for r in self.con.execute(
+                "SELECT media_path FROM works WHERE wid=?", (w.wid,))}) \
+                or (pack / "asr.json").exists()  # 已加工完（原片可删），只差正文时走 detail-only
+            try:
+                detail = self._fetch_work(w)
+            except Exception as e:
+                # 详情页失败（风控/超时）→ 跳过不入库，下轮采集重试
+                stat.setdefault("skipped_risk", 0)
+                stat["skipped_risk"] += 1
+                print(f"    ⏭️ {w.wid[:18]} 详情页失败（{str(e)[:40]}），下轮重试")
                 continue
-            detail = self._fetch_work(w)
+            if not detail.get("media_urls") and not detail.get("title"):
+                # 风控静默吞页：空详情不入库，留待下轮
+                stat.setdefault("skipped_risk", 0)
+                stat["skipped_risk"] += 1
+                print(f"    ⏭️ {w.wid[:18]} 空详情（疑似风控），下轮重试")
+                continue
             row = w.to_row()
             comments = detail.pop("comments", [])  # 详情页顺带抓的评论
             row.update({k: v for k, v in detail.items() if v not in (None, "", [])})
             try:
-                mp = self._download(w, detail, dest)
-                row["media_path"] = str(mp) if mp else ""
+                if have_media:
+                    mp = out if out.exists() else None  # 媒体已加工过，不重下
+                else:
+                    mp = self._download(w, detail, dest)
+                    row["media_path"] = str(mp) if mp else ""
             except Exception as e:
                 row["err"] = str(e)[:80]
                 mp = None

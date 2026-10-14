@@ -118,6 +118,7 @@ def main():
             else:
                 print(f"  ✅ {uid} +{r['works_new']} 作品 / +{r['media_new']} 媒体"
                       + (f" / +{r['comments_new']} 评论" if r.get("comments_new") else "")
+                      + (f" / ⏭️{r['skipped_risk']} 风控跳过" if r.get("skipped_risk") else "")
                       + f"（{dur:.0f}s）")
 
     # 生命周期：素材齐备（frames+asr）的作品删除原片，元数据留 source_url 可回溯
