@@ -187,7 +187,7 @@ class BilibiliCollector(UnifiedAccountCollector):
         if not aid:
             return []
         out = []
-        for pn in (1, 2):
+        for pn in (1,):  # 一级评论 30 条封顶，pn=1 足够
             cr = requests.get(
                 "https://api.bilibili.com/x/v2/reply?"
                 + urllib.parse.urlencode({"type": 1, "oid": aid, "pn": pn, "ps": 30, "sort": 1}),

@@ -245,6 +245,7 @@ class DouyinCollector(UnifiedAccountCollector):
             out = self._ev(ws, """(() => {
               const out = [];
               document.querySelectorAll('[data-e2e=comment-item]').forEach(c => {
+                if (c.closest('[data-e2e^="comment-child"]') || c.closest('.reply-item')) return;  // 只一级
                 const txt = c.querySelector('[data-e2e=comment-item-content]') || c;
                 const nick = c.querySelector('[data-e2e=comment-item-nickname]') || {};
                 const like = c.querySelector('[data-e2e=comment-item-like-count]') || {};

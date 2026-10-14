@@ -229,8 +229,14 @@ class UnifiedAccountCollector:
                 r["extra"] = {}
         return rows
 
+    MAX_COMMENTS = 30  # 每作品一级评论上限
+
     def _upsert_comments(self, wid: str, items: list[dict]) -> int:
         import json as _json
+        # 统一规则：只一级评论，最多 30 条
+        items = [it for it in items if not str(it.get("parent_cid") or "").strip()
+                 or it.get("parent_cid") in ("0", "", "None", "root")]
+        items = items[:self.MAX_COMMENTS]
         n = 0
         for it in items:
             if not it.get("cid"):

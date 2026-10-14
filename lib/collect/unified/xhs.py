@@ -192,7 +192,7 @@ class XhsCollector(UnifiedAccountCollector):
                         const it = n.interactInfo || {};
                         // 评论区（同一页面顺带解析）
                         const cs = (nd||{}).comments || {};
-                        const clist = (cs.list || []).slice(0, 30).map(c => ({
+                        const clist = (cs.list || []).filter(c => !c.targetComment).slice(0, 30).map(c => ({
                           cid: c.id, uid: (c.userInfo||{}).userId || '',
                           nickname: (c.userInfo||{}).nickname || '',
                           content: (c.content||'').slice(0, 500),
