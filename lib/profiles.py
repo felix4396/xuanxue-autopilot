@@ -264,15 +264,16 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25,
         return {"profile": None, "works": []}
     uid = prof["uid"]
     adapter.limiter.wait("xhs")
-    kw = _up.quote(red_id_or_name)
-    ws, tab = adapter._open(f"https://www.xiaohongshu.com/search_result?keyword={kw}")
+    ws, tab = adapter._open(f"https://www.xiaohongshu.com/user/profile/{uid}")
     try:
         expr = """(() => {
           const out = [];
-          document.querySelectorAll('a[href*="/explore/"], a[href*="/search_result/"]').forEach(a => {
-            const href = a.href || '';
-            const m = href.match(/(?:explore|search_result)\\/([0-9a-f]{24})\\?xsec_token=([^&]+)/);
+          document.querySelectorAll('a[href*="/explore/"], a[href*="/user/profile/"]').forEach(a => {
+            const href = a.getAttribute('href') || '';
+            let m = href.match(/\\/user\\/profile\\/[0-9a-f]{24}\\/([0-9a-f]{24})\\?xsec_token=([^&]+)/)
+                    || href.match(/\\/explore\\/([0-9a-f]{24})\\?xsec_token=([^&]+)/);
             if (!m) return;
+            if (out.find(o => o.wid === m[1])) return;
             const card = a.closest('section') || a.parentElement;
             const txt = (card ? card.innerText : '') || '';
             out.push({wid: m[1], token: m[2], txt: txt.slice(0, 80).replace(/\\n/g, '|')});
@@ -307,19 +308,15 @@ def scrape_xhs_user_works(adapter, red_id_or_name: str, limit: int = 25,
                     pass
         if login_err:
             return {"profile": prof, "works": [], "account_blocked": True}
-        nick = prof.get("nickname", "")
         seen = set()
         items = []
         for c in cards:
             if c["wid"] in seen:
                 continue
-            parts = c.get("txt", "").split("|")
-            author = parts[1] if len(parts) >= 2 else c.get("txt", "")
-            if not nick or (nick[:4] in author) or (nick[:4] in c.get("txt", "")[:40]):
-                seen.add(c["wid"])
-                if skip_wids and c["wid"] in skip_wids:
-                    continue
-                items.append((c["wid"], c["token"]))
+            seen.add(c["wid"])
+            if skip_wids and c["wid"] in skip_wids:
+                continue
+            items.append((c["wid"], c["token"]))
         from lib.collect.xhs_search import XhsSearchAdapter
         if isinstance(adapter, XhsSearchAdapter) and items:
             details = adapter.fetch_note_detail_batch(items[:limit])

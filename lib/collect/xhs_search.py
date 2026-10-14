@@ -322,6 +322,7 @@ class XhsSearchAdapter(BaseAdapter):
         dest = Path(dest)
         dest.mkdir(parents=True, exist_ok=True)
         ws = None
+        not_rendered_run = 0  # 连续 not_rendered → 账号级风控，中止整批
         try:
             for note_id, token in items:
                 try:
@@ -366,6 +367,17 @@ class XhsSearchAdapter(BaseAdapter):
                     for attempt2 in range(5):
                         try:
                             time.sleep(3)
+                            # 风控跳转检测（300011 会 redirect 到 website-login/error）
+                            try:
+                                _cur = self._ev(ws, "location.href")
+                                if "website-login/error" in (_cur or ""):
+                                    for rest_id, _tk in items[items.index((note_id, token)):]:
+                                        results.append((rest_id, None, "batch_aborted_300011"))
+                                    raise XhsAccountBlocked("300011")
+                            except XhsAccountBlocked:
+                                raise
+                            except Exception:
+                                pass
                             r = self._ev(ws, """(() => {
                           const nm = (window.__INITIAL_STATE__ && window.__INITIAL_STATE__.note
                             && window.__INITIAL_STATE__.note.noteDetailMap) || {};
@@ -405,6 +417,12 @@ class XhsSearchAdapter(BaseAdapter):
                     if not r:
                         self._check_risk_flag(ws)
                         results.append((note_id, None, "not_rendered"))
+                        not_rendered_run += 1
+                        if not_rendered_run >= 2:
+                            # 连续 2 条渲染失败 = 详情页也被风控，中止整批
+                            for rest_id, _tk in items[items.index((note_id, token)) + 1:]:
+                                results.append((rest_id, None, "batch_aborted_risk"))
+                            break
                         continue
                     hdrs = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"}
                     if r.get("videoUrl"):
@@ -426,7 +444,10 @@ class XhsSearchAdapter(BaseAdapter):
                     else:
                         results.append((note_id, None, ""))
                         continue
+                    not_rendered_run = 0
                     results.append((note_id, out, ""))
+                except StopIteration:
+                    raise
                 except Exception as e:
                     results.append((note_id, None, str(e)[:60]))
         finally:
@@ -439,6 +460,10 @@ class XhsSearchAdapter(BaseAdapter):
                 except Exception:
                     pass
         return results
+
+
+class XhsAccountBlocked(RuntimeError):
+    """xhs 账号级风控（300011）——调用方应触发全平台冷却。"""
 
     def fetch_note_detail(self, note_id: str, xsec_token: str = "") -> dict:
         """带 xsec_token 直开 explore 页 → 从 __INITIAL_STATE__.note 解析详情+媒体直链。

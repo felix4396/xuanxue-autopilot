@@ -69,8 +69,10 @@ def main():
                 continue
         # xhs 连续空轮熔断：上轮 0 卡的账号本轮跳过（风控中，等下轮自然重试）
         if p == "xhs":
-            if _tmod.time() < _xhs_block_until:
-                print(f"=== [{p}] {uid} 账号风控冷却中（至 {_tmod.strftime('%H:%M', _tmod.localtime(_xhs_block_until))}），跳过 ===")
+            # 闸门只挡"需要搜索页"的路径；主页抓卡（hex_uid 已缓存）不受 search 风控影响
+            _need_resolve = not (extra.get("hex_uid") or "").strip()
+            if _need_resolve and _tmod.time() < _xhs_block_until:
+                print(f"=== [{p}] {uid} 搜索风控冷却中（至 {_tmod.strftime('%H:%M', _tmod.localtime(_xhs_block_until))}），跳过 ===")
                 continue
             if _xhs_empty_streak.get(uid, 0) >= 2:
                 print(f"=== [{p}] {uid} 连续 {_xhs_empty_streak[uid]} 轮空卡，熔断跳过 ===")
@@ -78,7 +80,7 @@ def main():
         print(f"\n=== [{p}] {uid} ({fans} 粉) ===")
         if p == "xhs":
             from lib.profiles import scrape_xhs_user_works, resolve_xhs_uid
-            from lib.collect.xhs_search import XhsSearchAdapter
+            from lib.collect.xhs_search import XhsSearchAdapter, XhsAccountBlocked
             ad = XhsSearchAdapter()
             # hex_uid 已缓存 → 直接用（省一次 resolve 搜索页）
             _hex = (extra.get("hex_uid") or "").strip()
@@ -111,7 +113,13 @@ def main():
             if len(have_media) >= 15:
                 print(f"  已有 {len(have_media)} media，跳过搜索")
                 continue
-            r = scrape_xhs_user_works(ad, uid, limit=25, skip_wids=have_media, prof=prof)
+            try:
+                r = scrape_xhs_user_works(ad, uid, limit=25, skip_wids=have_media, prof=prof)
+            except XhsAccountBlocked:
+                _xhs_block_until = _tmod.time() + _XHS_COOLDOWN
+                _block_file.write_text(str(_xhs_block_until))
+                print(f"  ⚠️ 详情页 300011：xhs 全平台停采 3 小时（已持久化）")
+                break
             if not isinstance(r, dict):
                 print("  works 抓取失败，跳过")
                 _xhs_empty_streak[uid] = _xhs_empty_streak.get(uid, 0) + 1
@@ -213,10 +221,14 @@ def main():
                     print(f"  下载 {okn}/{len(dws)}")
         elif p == "bilibili":
             from lib.profiles import resolve_bili_mid, scrape_bili_user_works
-            prof = resolve_bili_mid(nick or uid)
-            if not prof:
-                print("  resolve 失败，跳过")
-                continue
+            # uid 已是数字 mid（历史账号）→ 直接用，省一次搜索页
+            if uid.isdigit():
+                prof = {"mid": uid, "nickname": nick or uid, "followers": fans or 0}
+            else:
+                prof = resolve_bili_mid(nick or uid)
+                if not prof:
+                    print("  resolve 失败，跳过")
+                    continue
             con.execute("UPDATE accounts SET uid=?, nickname=?, followers=? WHERE platform='bilibili' AND uid=?",
                         (prof["mid"], prof["nickname"], prof["followers"], uid))
             con.commit()
