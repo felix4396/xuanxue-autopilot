@@ -218,7 +218,7 @@ class XhsCollector(UnifiedAccountCollector):
             if not r:
                 return {}
             d = json.loads(r)
-            pc = lambda s: (lambda m: int(float(m[1]) * (10000 if m[2] else 1)))(re.match(r"([\d.]+)([万wW]?)", (s or "0").strip().replace(",", "")) or [0, "0", ""])
+            pc = lambda s: (lambda m: int(float(m[1]) * (10000 if m[2] else 1)))(re.match(r"([\d.]+)([万wW]?)", (str(s) if not isinstance(s, (list, dict)) else "0").strip().replace(",", "")) or [0, "0", ""])
             return {"title": d.get("title", ""), "desc": d.get("desc", ""),
                     "content_type": "video" if d.get("videoUrl") else ("image_text" if d.get("images") else "text"),
                     "media_urls": ([d["videoUrl"]] if d.get("videoUrl") else d.get("images", [])[:10]),

@@ -150,7 +150,8 @@ def export_work(platform: str, work: dict, mc_rec: dict | None,
         "source_url": work.get("source_url") or extra.get("media_url") or mc.get("video_url") or "",
         "user": {
             "uid": work.get("uid") or "",
-            "nickname": mc.get("nickname") or extra.get("nickname") or extra.get("user") or "",
+            "nickname": (mc.get("nickname") or extra.get("nickname") or extra.get("user")
+                         or work.get("_nickname") or ""),
         },
         "title": title,
         "metrics": {
@@ -185,7 +186,10 @@ def export_all(db_path: str = "data/bench.db", platforms: list[str] | None = Non
     platforms = platforms or ["bilibili", "douyin", "xhs", "x", "youtube", "weibo"]
     stats = {"exported": 0, "with_media": 0, "with_comments": 0, "skipped": 0}
     for p in platforms:
+        nick_by_uid = {a["uid"]: a.get("nickname") or a["uid"]
+                       for a in db.list_accounts(p)}
         for w in db.list_works(p):
+            w["_nickname"] = nick_by_uid.get(w.get("uid"), "")
             wid = w["wid"]
             dest = CORPUS_DIR / p / wid
             mc_rec = mc_recs.get(wid)
