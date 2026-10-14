@@ -61,8 +61,24 @@ def chat(
     return r.json()["choices"][0]["message"]["content"]
 
 
+def _salvage_json(text: str) -> dict | list | None:
+    """截断 JSON 抢救：丢最后一个不完整元素后重试。"""
+    for cut in range(1, 12):
+        s = text[:len(text) - cut * 0 or len(text)]
+    # 逐字符回退找最后一个能闭合的位置
+    for i in range(len(text), max(0, len(text) - 4000), -1):
+        seg = text[:i].rstrip()
+        for suffix in ("}", "]", '"'):
+            if seg.endswith(suffix):
+                try:
+                    return json.loads(seg)
+                except json.JSONDecodeError:
+                    continue
+    return None
+
+
 def chat_json(prompt: str, *, max_tokens: int = 1200, **kw) -> dict:
-    """要求模型输出 JSON 并解析。失败返回 {}。"""
+    """要求模型输出 JSON 并解析。失败返回 {}。输出被截断时尝试抢救。"""
     text = chat(
         prompt + "\n\n只输出合法 JSON，不要 markdown 代码块，不要解释。",
         max_tokens=max_tokens,
@@ -74,4 +90,5 @@ def chat_json(prompt: str, *, max_tokens: int = 1200, **kw) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        return {}
+        salv = _salvage_json(text)
+        return salv if isinstance(salv, dict) else {}

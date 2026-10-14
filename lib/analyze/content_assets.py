@@ -82,7 +82,7 @@ def build_card(platform: str, wid: str, title: str = "",
     result = chat_json(
         CARD_PROMPT.format(title=title or "(无标题)", platform=platform,
                            likes=likes, transcript=tr),
-        system=CARD_SYSTEM, max_tokens=1500)
+        system=CARD_SYSTEM, max_tokens=2500)
     if not result:
         return {}
     result.update({"wid": wid, "platform": platform, "title": title, "likes": likes})
@@ -120,8 +120,10 @@ def build_account_assets(platform: str, uid: str, nickname: str = "",
             "phrases": c.get("phrases")}, ensure_ascii=False))
     merged = chat_json(
         MERGE_PROMPT.format(n=len(cards), nickname=nickname or uid,
-                            cards="\n\n".join(blocks)),
-        system=MERGE_SYSTEM, max_tokens=3000)
+                            cards="\n\n".join(blocks))
+        + "\n\n注意：输出务必精炼。golden_lines_pool 每条金句一行不展开，"
+          "topic_inventory 每类不超过 3 行，总输出控制在 4500 字以内。",
+        system=MERGE_SYSTEM, max_tokens=8000)
     if not merged:
         return {}
     merged.update({
