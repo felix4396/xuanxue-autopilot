@@ -32,6 +32,27 @@ COLLECTORS: dict[str, type[UnifiedAccountCollector]] = {
 }
 
 
+def cleanup_tabs(cdp: str = "http://127.0.0.1:9222"):
+    """轮开始前清扫所有泄漏 tab（xhs/douyin/x/weibo 页面），只留非平台页面。"""
+    import requests as _rq
+    try:
+        tabs = _rq.get(f"{cdp}/json/list", timeout=8).json()
+    except Exception:
+        return 0
+    n = 0
+    for t in tabs:
+        if not (isinstance(t, dict) and t.get("type") == "page"):
+            continue
+        u = t.get("url") or ""
+        if any(k in u for k in ("xiaohongshu.com", "douyin.com", "x.com", "weibo.cn", "bilibili.com")):
+            try:
+                _rq.get(f"{cdp}/json/close/{t['id']}", timeout=5)
+                n += 1
+            except Exception:
+                pass
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--platforms", default="all")
@@ -39,7 +60,12 @@ def main():
     ap.add_argument("--min-works", type=int, default=10)
     ap.add_argument("--want-comments", action="store_true", help="对爆款抓评论")
     ap.add_argument("--comment-threshold", type=int, default=200, help="评论数阈值才算爆款")
+    ap.add_argument("--no-cleanup", action="store_true", help="跳过 tab 清扫")
     args = ap.parse_args()
+    if not args.no_cleanup:
+        n = cleanup_tabs()
+        if n:
+            print(f"[cleanup] 清扫 {n} 个泄漏 tab")
 
     plats = list(COLLECTORS) if args.platforms == "all" else \
         [p.strip() for p in args.platforms.split(",") if p.strip() in COLLECTORS]

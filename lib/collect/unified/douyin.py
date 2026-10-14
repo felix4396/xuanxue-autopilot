@@ -134,7 +134,15 @@ class DouyinCollector(UnifiedAccountCollector):
                     if isinstance(t, dict) and t.get("type") == "page" and "douyin.com" in (t.get("url") or "")]
             tab = tabs[-1]
             self._TAB = tab
-            ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+            try:
+                ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+            except Exception:
+                try:
+                    requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+                except Exception:
+                    pass
+                self._TAB = None
+                raise
         else:
             tab = self._TAB
             ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)

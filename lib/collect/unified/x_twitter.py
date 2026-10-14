@@ -57,6 +57,8 @@ class XCollector(UnifiedAccountCollector):
         time.sleep(10)
         tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                 if isinstance(t, dict) and t.get("type") == "page" and "x.com" in (t.get("url") or "")]
+        if not tabs:
+            raise RuntimeError("x tab open failed")
         self._TAB = tabs[-1]
         return self._TAB
 

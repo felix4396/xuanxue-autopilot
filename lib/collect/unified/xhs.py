@@ -35,9 +35,35 @@ class XhsCollector(UnifiedAccountCollector):
         tabs = [t for t in requests.get(f"{self.cdp}/json/list", timeout=5).json()
                 if isinstance(t, dict) and t["id"] not in before and t.get("type") == "page"]
         tab = tabs[-1]
-        ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+        try:
+            ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=60)
+        except Exception:
+            # ws 建连失败也要关 tab，否则泄漏
+            try:
+                requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+            except Exception:
+                pass
+            raise
         ws.settimeout(45)
         return ws, tab
+
+    def _close_tab(self, tab):
+        if not tab:
+            return
+        try:
+            requests.get(f"{self.cdp}/json/close/{tab['id']}", timeout=5)
+        except Exception:
+            pass
+
+    def _cleanup_xhs_tabs(self):
+        """兜底：清理所有 xhs explore/profile/search 泄漏 tab。"""
+        try:
+            for t in requests.get(f"{self.cdp}/json/list", timeout=5).json():
+                if (isinstance(t, dict) and t.get("type") == "page"
+                        and "xiaohongshu.com" in (t.get("url") or "")):
+                    self._close_tab(t)
+        except Exception:
+            pass
 
     @staticmethod
     def _ev(ws, expr, timeout=30.0):
