@@ -57,12 +57,12 @@ HTML_TMPL = """<!DOCTYPE html>
           <span class="wc-official-signal wc-official-signal-single"><img class="wc-official-signal-base" src="ios-cell-signal-official.png"><span class="wc-official-signal-active wc-official-signal-primary" style="width:100%"><img src="ios-cell-signal-official.png"></span></span>
           <span class="wc-official-wifi"><img src="ios-wifi-official.png"></span>
         </div>
-        <div class="wc-battery-wrap"><span class="wc-battery-level"><i style="width:97%"></i></span></div>
+        <div class="wc-battery-wrap" style="background-image:url(ios-battery-dark.png)"><span class="wc-battery-level"><i style="width:97%;background:#34c759"></i></span></div>
       </div>
     </div>
     <div class="wc-nav">
       <div class="wc-nav-left">
-        <svg width="27" height="52" viewBox="0 0 27 52" fill="none"><path d="M25 2L3 26l22 24" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <svg width="20" height="38" viewBox="0 0 27 52" fill="none"><path d="M25 2L3 26l22 24" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span class="wc-nav-badge">{unread}</span>
       </div>
       <div class="wc-nav-center"><span>{title}</span></div>
