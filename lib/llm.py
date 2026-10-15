@@ -77,18 +77,26 @@ def _salvage_json(text: str) -> dict | list | None:
     return None
 
 
-def chat_json(prompt: str, *, max_tokens: int = 1200, **kw) -> dict:
-    """要求模型输出 JSON 并解析。失败返回 {}。输出被截断时尝试抢救。"""
-    text = chat(
-        prompt + "\n\n只输出合法 JSON，不要 markdown 代码块，不要解释。",
-        max_tokens=max_tokens,
-        **kw,
-    )
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`").lstrip("json\n").rstrip("```").strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        salv = _salvage_json(text)
-        return salv if isinstance(salv, dict) else {}
+def chat_json(prompt: str, *, max_tokens: int = 1200, retries: int = 2, **kw) -> dict:
+    """要求模型输出 JSON 并解析。空返回/解析失败自动重试，仍失败返回 {}。截断时抢救。"""
+    last: dict = {}
+    for attempt in range(retries + 1):
+        text = chat(
+            prompt + "\n\n只输出合法 JSON，不要 markdown 代码块，不要解释。",
+            max_tokens=max_tokens,
+            **kw,
+        )
+        if not text or not text.strip():
+            last = {}
+            continue
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.strip("`").lstrip("json\n").rstrip("```").strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            salv = _salvage_json(text)
+            if isinstance(salv, dict) and salv:
+                return salv
+            last = {}
+    return last

@@ -15,15 +15,23 @@ from pathlib import Path
 
 from ..analyze.profile import get_profile, PROFILES_FILE
 from ..analyze.content_assets import get_account_assets, ASSETS_FILE
+
+
+def load_persona() -> dict:
+    """创作者个人固定信息（名字/人设/口头禅/固定结尾）。缺失字段为空串。"""
+    if PERSONA_FILE.exists():
+        return json.loads(PERSONA_FILE.read_text())
+    return {"name": "", "identity": {}, "voice": {}, "fixed_elements": {}}
 from ..llm import chat_json
 from .deaigen import AI_FLAVOR_WORDS
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DRAFTS_DIR = ROOT / "output" / "drafts"
+PERSONA_FILE = ROOT / "output" / "assets" / "persona.json"
 
 PLAN_SYSTEM = (
-    "你是{nickname}团队的选题策划。基于该账号的内容资产和画像，挑选/设计下一个选题。"
-    "优先从 content_gaps（内容空白）里找差异化机会，也可以翻新高互动旧选题。输出严格 JSON。"
+    "你是{creator_name}的选题策划。基于对标账号的内容资产和画像，挑选/设计{creator_name}的下一个选题。"
+    "注意：学的是对标账号的结构和套路，但内容和人设必须是{creator_name}自己的。输出严格 JSON。"
 )
 PLAN_PROMPT = """账号画像简报：
 {gen_brief}
@@ -40,10 +48,21 @@ PLAN_PROMPT = """账号画像简报：
 - structure_hint: 预期内容结构（用该账号验证过的结构）"""
 
 GEN_SYSTEM = (
-    "你是「{nickname}」本人。完全用该账号的语气、口头禅和内容结构写一条新作品。"
-    "硬性规则：禁用 AI 腔词汇（{banned}）；口语短句；像账号一贯风格。输出严格 JSON。"
+    "你是「{creator_name}」。用对标账号的内容结构和套路写一条新作品，"
+    "但身份、自称、口头禅、结尾全部用创作者自己的（见个人资产）。"
+    "对标账号的标志性词汇（如对方的昵称/自称）禁止照搬。"
+    "硬性规则：禁用 AI 腔词汇（{banned}）；口语短句。输出严格 JSON。"
 )
 GEN_PROMPT = """{gen_brief}
+
+【创作者本人资产（必须遵守）】
+- 名字/自称：{creator_name}
+- 人设关键词：{p_persona}
+- 口头禅：{p_catchphrases}
+- 固定开场仪式：{p_opening}
+- 固定结尾/落款：{p_ending}
+- 对观众称呼：{p_address}
+- 语气要求：{p_tone}
 
 本次选题：{topic}
 切入角度：{angle}
@@ -69,6 +88,8 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
     if not profile or not assets:
         return {"error": f"画像或内容资产缺失: {platform}:{uid}"}
     nickname = profile.get("nickname") or uid
+    persona = load_persona()
+    creator = persona.get("name") or "(未填写 persona.json 的 name)"
     banned = "、".join(AI_FLAVOR_WORDS[:12])
 
     # ---- 1. 选题规划 ----
@@ -78,7 +99,7 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
             topics=json.dumps(assets.get("topic_inventory", []), ensure_ascii=False)[:3000],
             gaps=json.dumps(assets.get("content_gaps", []), ensure_ascii=False)[:1500],
             refs=json.dumps(assets.get("proven_structures", [])[:2], ensure_ascii=False)[:800]),
-        system=PLAN_SYSTEM.format(nickname=nickname), max_tokens=800)
+        system=PLAN_SYSTEM.format(creator_name=creator), max_tokens=800)
     if not plan:
         return {"error": "选题规划失败"}
 
@@ -103,6 +124,13 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
     gen = chat_json(
         GEN_PROMPT.format(
             gen_brief=profile.get("gen_brief", ""),
+            creator_name=creator,
+            p_persona="、".join(persona.get("identity", {}).get("persona_keywords", [])) or "（未填）",
+            p_catchphrases="、".join(persona.get("voice", {}).get("catchphrases", [])) or "（未填）",
+            p_opening=persona.get("voice", {}).get("opening_self_intro") or persona.get("fixed_elements", {}).get("opening_ritual") or "（未填）",
+            p_ending=persona.get("fixed_elements", {}).get("ending_cta") or persona.get("fixed_elements", {}).get("sign_off") or "（未填）",
+            p_address=persona.get("audience", {}).get("address") or "（未填）",
+            p_tone=persona.get("voice", {}).get("tone") or "（未填）",
             topic=plan.get("topic", ""), angle=plan.get("angle", ""),
             structure_hint=plan.get("structure_hint", ""),
             hook_examples="；".join(hook_ex)[:600] or "（无）",
@@ -110,7 +138,7 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
             phrase_examples="；".join(phrase_ex)[:600] or "（无）",
             transcript_ref=tr_ref, n=n_body,
             banned=banned),
-        system=GEN_SYSTEM.format(nickname=nickname, banned=banned),
+        system=GEN_SYSTEM.format(creator_name=creator, banned=banned),
         max_tokens=2500, temperature=0.85)
     if not gen:
         return {"error": "生成失败"}
@@ -119,8 +147,8 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
     ts = int(time.time())
     out_dir = store_dir or DRAFTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    record = {"platform": platform, "uid": uid, "nickname": nickname,
-              "plan": plan, "draft": gen, "generated_at": ts}
+    record = {"platform": platform, "uid": uid, "reference_account": nickname,
+              "creator": creator, "plan": plan, "draft": gen, "generated_at": ts}
     (out_dir / f"{platform}-{uid[:12]}-{ts}.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2))
     md = [f"# {gen['titles'][0]}", ""]
