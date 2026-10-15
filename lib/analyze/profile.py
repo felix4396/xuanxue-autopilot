@@ -112,6 +112,11 @@ def build_profile(platform: str, uid: str, nickname: str = "",
         "platform": platform, "uid": uid, "nickname": nickname,
         "built_from": len(samples), "samples": [s["wid"] for s in samples],
     })
+    try:
+        from .assets_store import write_profile_md
+        write_profile_md(platform, uid, result)
+    except Exception:
+        pass  # 目录版失败不阻塞主流程
     return result
 
 

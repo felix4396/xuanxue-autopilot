@@ -133,6 +133,15 @@ def build_account_assets(platform: str, uid: str, nickname: str = "",
     })
     st.setdefault("accounts", {})[f"{platform}:{uid}"] = merged
     _save(st)
+    try:
+        from .assets_store import write_assets_md, write_report_md
+        from .profile import get_profile
+        write_assets_md(platform, uid, merged,
+                        {wid: st["cards"][wid] for wid in merged.get("card_wids", [])
+                         if wid in st["cards"]})
+        write_report_md(platform, uid, get_profile(platform, uid) or merged, merged)
+    except Exception:
+        pass  # 目录版失败不阻塞主流程
     return merged
 
 

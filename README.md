@@ -81,11 +81,16 @@ output/
 │   └── xhs/{wid}/          视频: content.md + media-cover.jpg + frame-first/mid/last.jpg
 │                                 + asr.json（句级时间戳）+ meta.json（含 source_url）
 │                           图集: content.md + img-1..N.jpg + meta.json
-├── assets/               # LLM 沉淀的资产库（长期维护）
+├── assets/               # LLM 沉淀的资产库（长期维护，双层：索引 + 按账号目录）
 │   ├── persona.json        ★ 创作者个人固定信息（名字/自称/口头禅/固定开场结尾）
-│   ├── profiles.json       15 个对标账号画像（niche/style/topics/vocabulary/gen_brief）
-│   ├── content_assets.json 246 作品精华卡 + 13 账号归并（选题/金句池/话术/结构/空白）
-│   └── assets.json         爆款元素池（钩子/标题/封面）
+│   ├── profiles.json       账号画像索引（程序消费）
+│   ├── content_assets.json 内容资产索引（程序消费）
+│   ├── assets.json         爆款元素池（钩子/标题/封面）
+│   └── accounts/{platform}-{uid}/   每账号独立目录（人读+沉淀）
+│       ├── profile.json / profile.md          账号画像
+│       ├── content_assets.json / content_assets.md  内容资产（选题/金句/话术）
+│       ├── cards.json                         该账号全部作品精华卡
+│       └── report.md                          拆解总报告（画像+资产合成叙事版，含模仿策略）
 ├── drafts/               # 生成的成稿（md + json 选题依据可溯源）
 ├── reports/              # doctor 拆解报告
 └── archive/              # 可选冷备（sweep --mode archive）
