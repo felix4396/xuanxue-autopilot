@@ -1,6 +1,13 @@
 # 数据与凭证 — 均不入 Git
 data/
-output/
+output/*
+!output/assets
+output/assets/*
+!output/assets/accounts
+!output/assets/persona.json
+!output/assets/profiles.json
+!output/assets/content_assets.json
+!output/assets/accounts/**
 *.db
 *.sqlite3
 
@@ -17,3 +24,7 @@ __pycache__/
 vendor/
 .playwright-cli/
 browser-cookies/
+
+# 账号资产目录（json+md 小文件，人读+沉淀，入库）
+!output/assets/accounts/
+!output/assets/accounts/**

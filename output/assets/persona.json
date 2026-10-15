@@ -1,0 +1,38 @@
+{
+  "_说明": "创作者个人固定信息资产。generate.py 生成时注入，替代对标账号的昵称/人设。字段缺失时生成器会提示补填。",
+  "name": "莉莉安",
+  "identity": {
+    "self_title": "",
+    "persona_keywords": [],
+    "bio": ""
+  },
+  "voice": {
+    "opening_self_intro": "",
+    "catchphrases": [],
+    "tone": "",
+    "taboo_words": []
+  },
+  "platforms": {
+    "xhs": {
+      "nickname": "",
+      "intro": ""
+    },
+    "douyin": {
+      "nickname": "",
+      "intro": ""
+    },
+    "bilibili": {
+      "nickname": "",
+      "intro": ""
+    }
+  },
+  "fixed_elements": {
+    "opening_ritual": "",
+    "ending_cta": "",
+    "sign_off": ""
+  },
+  "audience": {
+    "address": "",
+    "notes": ""
+  }
+}
