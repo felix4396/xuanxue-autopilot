@@ -17,7 +17,7 @@ python scripts/pipeline.py --engine local   # ASR 换本地 whisper（默认云�
 
 | 步 | 模块 | 做什么 | 产物 |
 |---|---|---|---|
-| 1 采集 | `lib/collect/` | CDP 驱动 Chrome 抓主页列表+详情页（正文/评论/媒体），风控失败跳过下轮自愈 | `data/bench.db` + `output/media/` |
+| 1 采集 | `lib/collect/` | CDP 驱动 Chrome 抓主页列表+详情页（正文/评论/媒体），支持 6 平台：xhs / douyin / bilibili / x / youtube / weibo（`--platforms` 选配，默认全跑），风控失败跳过下轮自愈 | `data/bench.db` + `output/media/` |
 | 2 加工 | `lib/analyze/video.py` | ffmpeg 抽帧（10帧）+ 提音 + 云端 ASR（百炼 `qwen-audio-3.1-asr-flash-filetrans`，OSS 中转，~4s/条，句级时间戳） | `frames/ + audio.m4a + asr.json` |
 | 3 瘦身 | `lib/lifecycle.py` | 素材齐备即删原片（兜底扫磁盘漏网件），`source_url` 回档 | media 只留帧图+音频 |
 | 4 导出 | `lib/corpus.py` | 轻量语料：视频=封面+三帧+文稿，图集=全图，零视频零音频 | `output/corpus/`（0.2G） |
@@ -46,8 +46,8 @@ python -m lib.compose.generate --platform xhs --uid Ginababy1111
 ```
 lib/
 ├── bench/                # 对标账号库（SQLite: data/bench.db，账号/作品/评论）
-├── collect/              # 采集下载（CDP 驱动 xhs/douyin/bilibili + yt-dlp 适配 + 限速风控）
-│   └── unified/          #   三平台统一采集器（base 主循环 + xhs/douyin/bilibili 实现）
+├── collect/              # 采集下载（CDP 驱动 + yt-dlp 适配 + 限速风控）
+│   └── unified/          #   六平台统一采集器（base 主循环 + xhs/douyin/bilibili/x/youtube/weibo 实现）
 ├── analyze/              # 分析拆解
 │   ├── video.py          #   抽帧/提音/云端 ASR（OSS 签名 URL 中转）
 │   ├── llm_analyze.py    #   单作品 LLM 拆解（钩子/结构/可迁移观点）

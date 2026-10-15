@@ -36,7 +36,7 @@ def main():
     ap = argparse.ArgumentParser(description="玄学自媒体数据管线")
     ap.add_argument("--no-collect", action="store_true", help="跳过采集")
     ap.add_argument("--no-prep", action="store_true", help="跳过加工")
-    ap.add_argument("--platforms", default="xhs,douyin,bilibili")
+    ap.add_argument("--platforms", default="xhs,douyin,bilibili,x,youtube,weibo")
     ap.add_argument("--mode", default="latest", choices=["latest", "monitor", "top"])
     ap.add_argument("--engine", default="cloud", choices=["cloud", "local"])
     ap.add_argument("--skip-asr", action="store_true")
