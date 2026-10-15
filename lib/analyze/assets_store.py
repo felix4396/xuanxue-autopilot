@@ -224,28 +224,16 @@ def write_report_md(platform: str, uid: str, p: dict, a: dict) -> Path:
         gaps=_fmt(a.get("content_gaps")),
         refs="、".join(a.get("card_wids", [])[:5]) or "（无）",
         creator=creator)
-    # LLM 补一段针对创作者的行动建议叙事（网关限流时降级为结构化要点）
-    strategy = ""
-    try:
-        advice = chat_json(
-            f"以下是对标账号的画像与内容资产。请以资深内容操盘手视角，给创作者「{creator}」"
-            f"写一份 300-500 字的模仿策略：先学什么、再学什么、避开什么（不要照搬对方哪些特征）。"
-            f"输出 JSON: {{\"strategy\": \"...\"}}\n\n画像：{json.dumps(p, ensure_ascii=False)[:2000]}"
-            f"\n\n资产：{json.dumps(a, ensure_ascii=False)[:2000]}",
-            max_tokens=1200)
-        strategy = advice.get("strategy", "") if advice else ""
-    except Exception:
-        strategy = ""
-    if not strategy:
-        gaps = a.get("content_gaps") or []
-        strategy = (
-            "（LLM 网关暂不可用，以下为结构化要点）\n"
-            f"1. 先学：{_fmt(_get(p.get('style', {}), 'tone'), bullet=False)[:80]} 的语气与"
-            f"「{_fmt(_get(p.get('style', {}), 'opening_pattern'), bullet=False)[:60]}」的开场套路；\n"
-            f"2. 再学：用「{_fmt(_get(p.get('style', {}), 'cta_pattern'), bullet=False)[:60]}」的结尾引导与"
-            f"已验证结构沉淀自己的模板；\n"
-            f"3. 优先做内容空白：{('；'.join(str(g)[:40] for g in gaps[:3]) if gaps else '见选题清单未覆盖方向')}；\n"
-            f"4. 避开照搬：对方的自称、标志性口头禅、人设细节一律换成创作者自己的。")
+    # LLM 补一段针对创作者的行动建议叙事。失败直接抛错，不降级。
+    advice = chat_json(
+        f"以下是对标账号的画像与内容资产。请以资深内容操盘手视角，给创作者「{creator}」"
+        f"写一份 300-500 字的模仿策略：先学什么、再学什么、避开什么（不要照搬对方哪些特征）。"
+        f"输出 JSON: {{\"strategy\": \"...\"}}\n\n画像：{json.dumps(p, ensure_ascii=False)[:2000]}"
+        f"\n\n资产：{json.dumps(a, ensure_ascii=False)[:2000]}",
+        max_tokens=1200)
+    if not advice or not advice.get("strategy"):
+        raise RuntimeError(f"{platform}:{uid} report.md 模仿策略 LLM 生成失败")
+    strategy = advice["strategy"]
     md = base + f"\n## 七、模仿策略\n\n{strategy}\n"
     path = d / "report.md"
     path.write_text(md)
