@@ -151,12 +151,24 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
               "creator": creator, "plan": plan, "draft": gen, "generated_at": ts}
     (out_dir / f"{platform}-{uid[:12]}-{ts}.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2))
-    md = [f"# {gen['titles'][0]}", ""]
-    md += [f"> 备选标题：{' / '.join(gen['titles'][1:])}", ""]
-    md += [gen["opening"], ""]
+    def _flat(v) -> str:
+        """LLM 返回的字段可能是嵌套 list/dict，展平成文本。"""
+        if isinstance(v, str):
+            return v.strip()
+        if isinstance(v, list):
+            return "\n\n".join(_flat(x) for x in v if x)
+        if isinstance(v, dict):
+            return "\n\n".join(str(x) for x in v.values() if x)
+        return str(v)
+
+    titles = gen["titles"] if isinstance(gen["titles"], list) else [gen["titles"]]
+    md = [f"# {_flat(titles[0])}", ""]
+    if len(titles) > 1:
+        md += [f"> 备选标题：{' / '.join(_flat(t) for t in titles[1:])}", ""]
+    md += [_flat(gen["opening"]), ""]
     body = gen["body"] if isinstance(gen["body"], list) else [gen["body"]]
-    md += [str(seg) for seg in body if not isinstance(seg, (list, dict))]
-    md += ["", f"**{gen['cta']}**", "",
+    md += [_flat(seg) for seg in body if not isinstance(seg, (list, dict))]
+    md += ["", f"**{_flat(gen['cta'])}**", "",
            f"---", f"*选题：{plan.get('topic')}｜参考：{','.join(ref_wids[:3])}｜"
            f"画像+内容资产驱动生成*"]
     md_path = out_dir / f"{platform}-{uid[:12]}-{ts}.md"
