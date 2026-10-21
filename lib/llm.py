@@ -11,8 +11,8 @@ from pathlib import Path
 
 import requests
 
-DEFAULT_BASE = os.environ.get("LLM_BASE_URL", "http://111.231.174.164:6010/v1")
-DEFAULT_MODEL = os.environ.get("LLM_MODEL", "deepseek-v4.1-flash")
+DEFAULT_BASE = os.environ.get("LLM_BASE_URL", "http://101.43.0.41:6010/v1")
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "cn:glm-5.3-flash")
 _ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
 
