@@ -162,14 +162,26 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
             return "\n\n".join(str(x) for x in v.values() if x)
         return str(v)
 
-    titles = gen["titles"] if isinstance(gen["titles"], list) else [gen["titles"]]
+    def _fld(key: str):
+        """LLM 返回字段可能改名/缺失，宽松取值。"""
+        if key in gen:
+            return gen[key]
+        for k in gen:
+            if k.startswith(key) or key.startswith(k):
+                return gen[k]
+        return None
+
+    titles = _fld("titles") or ["（无标题）"]
+    if not isinstance(titles, list):
+        titles = [titles]
     md = [f"# {_flat(titles[0])}", ""]
     if len(titles) > 1:
         md += [f"> 备选标题：{' / '.join(_flat(t) for t in titles[1:])}", ""]
-    md += [_flat(gen["opening"]), ""]
-    body = gen["body"] if isinstance(gen["body"], list) else [gen["body"]]
+    md += [_flat(_fld("opening") or ""), ""]
+    body = _fld("body") or ""
+    body = body if isinstance(body, list) else [body]
     md += [_flat(seg) for seg in body if not isinstance(seg, (list, dict))]
-    md += ["", f"**{_flat(gen['cta'])}**", "",
+    md += ["", f"**{_flat(_fld('cta') or '')}**", "",
            f"---", f"*选题：{plan.get('topic')}｜参考：{','.join(ref_wids[:3])}｜"
            f"画像+内容资产驱动生成*"]
     md_path = out_dir / f"{platform}-{uid[:12]}-{ts}.md"
