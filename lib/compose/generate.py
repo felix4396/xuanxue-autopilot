@@ -82,7 +82,8 @@ GEN_PROMPT = """{gen_brief}
 - cta: 结尾引导（1 句，用该账号的 cta 套路）"""
 
 
-def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
+def generate(platform: str, uid: str, store_dir: Path | None = None,
+             topic_hint: str = "") -> dict:
     """全自动生成一条新内容。返回 draft dict 并落盘 md。"""
     profile = get_profile(platform, uid)
     assets = get_account_assets(platform, uid)
@@ -93,16 +94,21 @@ def generate(platform: str, uid: str, store_dir: Path | None = None) -> dict:
     creator = persona.get("name") or "(未填写 persona.json 的 name)"
     banned = "、".join(AI_FLAVOR_WORDS[:12])
 
-    # ---- 1. 选题规划 ----
-    plan = chat_json(
-        PLAN_PROMPT.format(
-            gen_brief=profile.get("gen_brief", ""),
-            topics=json.dumps(assets.get("topic_inventory", []), ensure_ascii=False)[:3000],
-            gaps=json.dumps(assets.get("content_gaps", []), ensure_ascii=False)[:1500],
-            refs=json.dumps(assets.get("proven_structures", [])[:2], ensure_ascii=False)[:800]),
-        system=PLAN_SYSTEM.format(creator_name=creator), max_tokens=800)
-    if not plan:
-        return {"error": "选题规划失败"}
+    # ---- 1. 选题规划（topic_hint 人工锁定时跳过 LLM）----
+    if topic_hint:
+        plan = {"topic": topic_hint, "angle": topic_hint,
+                "reference_wids": assets.get("card_wids", [])[:3],
+                "structure_hint": ""}
+    else:
+        plan = chat_json(
+            PLAN_PROMPT.format(
+                gen_brief=profile.get("gen_brief", ""),
+                topics=json.dumps(assets.get("topic_inventory", []), ensure_ascii=False)[:3000],
+                gaps=json.dumps(assets.get("content_gaps", []), ensure_ascii=False)[:1500],
+                refs=json.dumps(assets.get("proven_structures", [])[:2], ensure_ascii=False)[:800]),
+            system=PLAN_SYSTEM.format(creator_name=creator), max_tokens=800)
+        if not plan:
+            return {"error": "选题规划失败"}
 
     # ---- 2. 取参考素材（few-shot 原文）----
     ref_wids = plan.get("reference_wids") or assets.get("card_wids", [])[:2]
@@ -211,8 +217,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="账号驱动内容生成")
     ap.add_argument("--platform", required=True)
     ap.add_argument("--uid", required=True)
+    ap.add_argument("--topic", default="", help="人工锁定选题（空则 LLM 自选）")
     a = ap.parse_args()
-    r = generate(a.platform, a.uid)
+    r = generate(a.platform, a.uid, topic_hint=a.topic)
     if "error" in r:
         print("❌", r["error"])
     else:
